@@ -2,6 +2,7 @@
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,11 +17,20 @@ def db_path() -> str:
     return os.environ.get("DB_PATH", "brief.db")
 
 
+_ready: set[str] = set()      # database files whose schema this process has already applied
+_ready_lock = threading.Lock()
+
+
 def connect(path: str | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or db_path(), timeout=30)
+    path = path or db_path()
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(SCHEMA.read_text())
+    # Apply the schema once per file per process, not on every connection: it takes a write lock.
+    with _ready_lock:
+        if path not in _ready:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(SCHEMA.read_text())
+            _ready.add(path)
     return conn
 
 

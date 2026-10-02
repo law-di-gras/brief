@@ -1,4 +1,6 @@
+import faulthandler
 import os
+import signal
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,6 +11,7 @@ except ImportError:
     pass
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -16,6 +19,9 @@ from pydantic import BaseModel
 from backend import db
 from backend.product import bridge, provider, replies, sessions
 from backend.product import deterministic as det
+
+# `kill -USR1 <pid>` prints every thread's stack to the server log, for diagnosing a stuck server.
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 app = FastAPI(title="Brief")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -36,7 +42,8 @@ async def require_firm_session(request: Request, call_next):
     """Everything the firm sees needs a firm session. /p/* is the provider side and has its own."""
     request.state.user = {"id": "me", "name": None}
     if sessions.auth_required() and request.url.path.startswith(sessions.PROTECTED) and request.method != "OPTIONS":
-        s = sessions.firm_session(request)
+        # The lookup touches SQLite; run it off the event loop so a busy database can never freeze the server.
+        s = await run_in_threadpool(sessions.firm_session, request)
         if not s:
             return JSONResponse({"detail": "Sign in to continue."}, status_code=401)
         request.state.user = {"id": s["user_id"], "name": s["user_name"]}
