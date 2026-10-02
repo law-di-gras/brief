@@ -1,6 +1,8 @@
 async function req(path, opts) {
   const r = await fetch(path, opts);
   const body = await r.json().catch(() => null);
+  // A firm session that ended sends the app back to the sign-in screen.
+  if (r.status === 401 && !path.startsWith("/p/") && !path.startsWith("/auth/")) window.dispatchEvent(new Event("brief:signed-out"));
   if (!r.ok) throw new Error((body && body.detail) || `Request failed (${r.status})`);
   return body;
 }
