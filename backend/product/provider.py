@@ -61,7 +61,7 @@ def build_sections(matter_id, cid):
         coverage = {"held": False, "state": "confirmed" if cov["value"] else "not yet confirmed"}
 
     requests = [{k: r[k] for k in ("ref", "what", "first_asked", "last_asked", "times_asked", "fields")}
-                for r in det.open_requests(cid, facts) if not r["answered"]]
+                for r in det.open_requests(cid, facts, shareable_only=True) if not r["answered"]]
 
     seen = sorted((f for f in facts if f["category"] == "treatment" and f["audience"] == "shareable"
                    and cid in f["entities"] and det.local_date(f["event_date"]) and det.local_date(f["event_date"]) <= t),

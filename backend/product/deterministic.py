@@ -241,7 +241,29 @@ def request_fields(text):
     return fields
 
 
-def open_requests(contact_id, all_facts=None, all_deps=None):
+# What a request is for, in the words a lawyer scans for. First match wins.
+KINDS = [
+    ("surgery", "Surgery date", ("surg", "arthroscop", "operative", "procedure", "schedul", "appointment")),
+    ("report", "Report", ("report", " ime", "mri", "evaluation", "opinion", "narrative", "review", "imaging")),
+    ("payment", "Lien / payment", ("lien", "payment", "reduction", "balance", "paid", "reimburs")),
+    ("records", "Records / bills", ("record", "note", "ledger", "bill", "chart", "file", "copies", "invoice", "itemi", "statement")),
+]
+
+
+def request_kind(text):
+    s = f" {str(text or '').lower()}"
+    for key, label, words in KINDS:
+        if any(w in s for w in words):
+            return key, label
+    return "other", "Other"
+
+
+def short_label(text, limit=80):
+    s = re.split(r"(?<!\bDr)(?<!\bMr)(?<!\bMs)(?<!\bMrs)(?<!\bSt)(?<=[.;:])\s", str(text or "").strip())[0].rstrip(".;:")
+    return s if len(s) <= limit else s[: limit - 1].rsplit(" ", 1)[0] + "…"
+
+
+def open_requests(contact_id, all_facts=None, all_deps=None, shareable_only=False):
     """What the firm is waiting on from one contact, with repeated asks grouped."""
     all_facts = facts() if all_facts is None else all_facts
     cdeps = [d for d in (deps() if all_deps is None else all_deps) if d["holder"] == contact_id]
@@ -256,8 +278,13 @@ def open_requests(contact_id, all_facts=None, all_deps=None):
     for f in all_facts:
         if f["category"] != "provider_request" or contact_id not in f["entities"]:
             continue
+        if shareable_only and f.get("audience") != "shareable":
+            continue    # internal notes about a request ("should have been asked") never reach the provider
         hits = [d for d in cdeps if set(d["source_ids"]) & set(f["source_ids"]) or d["waiting_on"].lower() in f["text"].lower()]
-        targets = [(key_of(d), d["waiting_on"]) for d in hits] or [(f["text"], f["text"])]
+        kind, kind_label = request_kind(f["text"])
+        # Facts with no dependency behind them are grouped by what they ask for, not listed one by one.
+        fallback = (f"kind:{kind}", kind_label) if kind != "other" else (f["text"], short_label(f["text"]))
+        targets = [(key_of(d), d["waiting_on"]) for d in hits] or [fallback]
         for key, label in dict(targets).items():
             g = groups.setdefault(key, {"what": label, "asks": [], "source_ids": [], "texts": []})
             g["asks"].append(f["event_date"])
@@ -277,7 +304,10 @@ def open_requests(contact_id, all_facts=None, all_deps=None):
         dates = sorted(d for d in (local_date(a) for a in (g["asks"] or g.get("dep_dates", []))) if d)
         ref = hashlib.sha1(f"{contact_id}|{key}".encode()).hexdigest()[:12]
         what = g["what"][:1].upper() + g["what"][1:]
-        out.append({"ref": ref, "node": key, "what": what, "first_asked": iso(dates[0]) if dates else None,
+        kind, kind_label = request_kind(what)               # the label first, the surrounding text only if it says nothing
+        if kind == "other":
+            kind, kind_label = request_kind(" ".join(g["texts"]))
+        out.append({"ref": ref, "node": key, "what": what, "kind": kind, "kind_label": kind_label, "first_asked": iso(dates[0]) if dates else None,
                     "last_asked": iso(dates[-1]) if dates else None,
                     # asks on file, or the count the file itself states ("three written requests")
                     "times_asked": max([len(g["asks"])] + [stated_asks(item_texts.get(s)) for s in g["source_ids"]]),
@@ -386,9 +416,46 @@ def corrections(matter_id):
     """The few that matter, plus the rest under `other` for a "show all" toggle."""
     by_id = {f["id"]: f for f in facts()}
 
+    src = {i["item_id"]: i for i in db.q("SELECT item_id, clio_type, clio_id, title, item_date FROM items")}
+
+    def side_label(sid):
+        i = src.get(sid)
+        if not i:
+            return sid
+        kind = {"matter": "Matter record", "note": "Note", "communication": "Email", "task": "Task",
+                "calendar_entry": "Calendar", "expense": "Expense", "provider_reply": "Provider reply"}.get(i["clio_type"])
+        if i["clio_type"] == "document":
+            return re.sub(r", page \d+$", "", i["title"] or "Document")
+        d = local_date(i["item_date"])
+        return f"{kind or i['clio_type']}" + (f", {d.strftime('%b')} {d.day}, {d.year}" if d and i["clio_type"] != "matter" else "")
+
+    def origin_key(sids):
+        i = src.get(sids[0]) if sids else None
+        return ("doc", i["clio_id"]) if i and i["clio_type"] == "document" else ("item", sids[0] if sids else None)
+
+    def sides(fact_ids):
+        """The statements that disagree, one side per origin (all pages of a PDF are one side), oldest first."""
+        groups = {}
+        for fid in fact_ids:
+            f = by_id.get(fid)
+            if f and f["source_ids"]:
+                groups.setdefault(origin_key(f["source_ids"]), []).append(f)
+        out = []
+        for fs in groups.values():
+            fs.sort(key=lambda f: -(f["importance"] or 0))
+            f = fs[0]
+            out.append({"label": side_label(f["source_ids"][0]), "text": f["text"], "evidence": f["evidence"],
+                        "source_ids": f["source_ids"], "date": min((src[s]["item_date"] for s in f["source_ids"]
+                                                                     if s in src and src[s]["item_date"]), default=None),
+                        "more": len(fs) - 1})
+        return sorted(out, key=lambda s: s["date"] or "")[:2]
+
+    KPI = {"case_value": "Case value", "coverage": "Coverage", "specials": "Specials", "lien": "Lien"}
+
     def conflict_card(c):
         return {"id": c["id"], "topic": c["topic"], "explanation": c["explanation"], "severity": c["severity"],
-                "kpi_affected": c["kpi_affected"],
+                "kpi_affected": c["kpi_affected"], "affects": KPI.get(c["kpi_affected"]),
+                "sides": sides(c["fact_ids"]),
                 "facts": [fact_brief(by_id[i]) for i in c["fact_ids"] if i in by_id]}
 
     def issue_card(i):

@@ -44,6 +44,47 @@ function Correction({ badge, red, title, sub, facts, onCite, dim }) {
   );
 }
 
+// Two statements that cannot both be true, side by side, each with where it comes from.
+function ConflictCard({ c, onCite }) {
+  const [open, setOpen] = useState(false);
+  const [a, b] = c.sides;
+  const Side = ({ s, tag }) => (
+    <div className="min-w-0 border border-rule bg-white p-3">
+      <div className="flex items-baseline justify-between gap-2 text-xs text-stone-500">
+        <span className="kicker">{tag}</span>
+        <span className="truncate" title={s.label}>{s.label}</span>
+      </div>
+      <p className="mt-2 font-serif text-[15px] leading-snug">
+        <span className="cite" onClick={() => onCite({ text: s.text, source_ids: s.source_ids, evidence: s.evidence })}>{s.text}</span>
+      </p>
+      {s.date && <div className="mt-1 text-xs text-stone-400">Recorded {fmtDate(s.date)}{s.more > 0 && ` · +${s.more} more in the same source`}</div>}
+    </div>
+  );
+  return (
+    <div className="border-b border-rule py-4">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="badge-red">Conflict</span>
+        <span className="font-medium">{c.topic}</span>
+        {c.affects && <span className="text-xs text-stone-500">· affects {c.affects}</span>}
+      </div>
+      {b ? (
+        <div className="mt-3 grid items-stretch gap-2 md:grid-cols-[1fr_auto_1fr]">
+          <Side s={a} tag="Says" />
+          <div className="flex items-center justify-center text-xs font-semibold uppercase tracking-wide text-flag md:flex-col">vs</div>
+          <Side s={b} tag="But" />
+        </div>
+      ) : null}
+      {c.explanation && <p className="mt-2 text-sm text-stone-600">{c.explanation}</p>}
+      {c.facts.length > 2 && <Toggle open={open} onClick={() => setOpen(!open)}>Show all {c.facts.length} statements</Toggle>}
+      {open && (
+        <ul className="mt-2 space-y-1 border-l-2 border-rule pl-3">
+          {c.facts.map((f) => <li key={f.id} className="text-sm"><Cited s={f} onCite={onCite} /></li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function Kpi({ k, onCite }) {
   const big = k.amount != null ? fmtMoney(k.amount) : null;
   return (
@@ -144,7 +185,9 @@ export default function AttorneyEdition({ matterId }) {
           <section>
             <div className="kicker border-b border-rule pb-1">Corrections: where the file disagrees with itself</div>
             {d.corrections.conflicts.map((c) => (
-              <Correction key={`c${c.id}`} badge="Conflict" red title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
+              c.sides?.length > 1
+                ? <ConflictCard key={`c${c.id}`} c={c} onCite={setCite} />
+                : <Correction key={`c${c.id}`} badge="Conflict" red title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
             ))}
             {d.corrections.issues.map((i) => (
               <Correction key={`i${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
@@ -160,7 +203,9 @@ export default function AttorneyEdition({ matterId }) {
                 {allOther && (
                   <div className="mt-1">
                     {d.corrections.other.conflicts.map((c) => (
-                      <Correction key={`oc${c.id}`} badge="Discrepancy" title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
+                      c.sides?.length > 1
+                        ? <ConflictCard key={`oc${c.id}`} c={c} onCite={setCite} />
+                        : <Correction key={`oc${c.id}`} badge="Discrepancy" title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
                     ))}
                     {d.corrections.other.issues.map((i) => (
                       <Correction key={`oi${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
@@ -188,8 +233,10 @@ export default function AttorneyEdition({ matterId }) {
                     <span className="shrink-0 text-xs text-stone-500">{w.days_silent != null && `${w.days_silent} days silent`}</span>
                   </div>
                   {w.owes.map((o) => (
-                    <div key={o.ref} className="text-sm">
-                      <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>{o.what}</span>
+                    <div key={o.ref} className="mt-1 text-sm">
+                      <span className="mr-1.5 inline-block border border-stone-400 px-1 text-[10px] font-semibold uppercase tracking-wide text-stone-600">{o.kind_label}</span>
+                      {o.what !== o.kind_label && <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>{o.what}</span>}
+                      {o.what === o.kind_label && <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>see source</span>}
                       <span className="text-xs text-stone-500">{o.times_asked > 0 && ` · asked ${times(o.times_asked)}`}{o.first_asked && ` · since ${fmtShort(o.first_asked)}`}</span>
                     </div>
                   ))}
