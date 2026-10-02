@@ -85,8 +85,10 @@ def build_sections(matter_id, cid):
     told = []
     b = bridge.build_edition(matter_id, None).get("blocker")
     if b and b.get("disputed") and not b.get("resolved") and any(h["holder"] == cid for h in b["holders"]):
-        # Statements that name this provider as the one holding things up, quoted as written.
-        told = [{"quote": h["quote"], "date": h.get("date"), "about": b["label"]} for h in b["holders"] if h["holder"] == cid]
+        # What the OTHER side of the standoff said (the client's own words, for example), quoted as written.
+        # Never this provider's own statement, and never the firm's internal notes.
+        told = [{"quote": h["quote"], "date": h.get("date"), "about": b["label"]} for h in b["holders"]
+                if h["holder"] != cid and str(h["holder"]).startswith("contact:")]
 
     return {"provider_name": name, "status": status, "coverage": coverage, "requests": requests,
             "treatment": treatment, "other_treatment": other, "updates": updates, "patient_told_us": told}

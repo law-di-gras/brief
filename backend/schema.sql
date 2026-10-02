@@ -103,6 +103,15 @@ CREATE TABLE IF NOT EXISTS meta(
   PRIMARY KEY (matter_id, key)
 );
 
+-- One Clio token per signed-in user. is_service marks the account background work (provider replies,
+-- the CLI) runs as; it is the first account to connect and only changes if that account is removed.
+CREATE TABLE IF NOT EXISTS clio_tokens(
+  user_id TEXT PRIMARY KEY,
+  access_token TEXT NOT NULL, refresh_token TEXT, expires_at REAL,
+  is_service INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+);
+
+-- Legacy single-token table, read once and migrated into clio_tokens.
 CREATE TABLE IF NOT EXISTS oauth_tokens(
   id INTEGER PRIMARY KEY CHECK (id = 1),
   access_token TEXT NOT NULL, refresh_token TEXT, expires_at REAL

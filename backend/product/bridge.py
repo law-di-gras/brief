@@ -30,9 +30,10 @@ except Exception:
 PIPELINE_LIVE = bool(_run_pipeline and _build_edition)
 
 
-def run_pipeline(matter_id):
+def run_pipeline(matter_id, user_id=None):
+    """user_id: the signed-in firm user whose Clio token to read with. None = the service account."""
     if _run_pipeline:
-        return _run_pipeline(matter_id)
+        return _run_pipeline(matter_id, user_id=user_id)
     return {"stub": True, "items_changed": 0, "facts_kept": 0, "facts_dropped": 0,
             "note": "backend.pipeline.run not available; nothing was extracted"}
 

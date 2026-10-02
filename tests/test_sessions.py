@@ -13,7 +13,7 @@ def app():
 
 def sign_in(monkeypatch):
     monkeypatch.setenv("CLIO_SOURCE", "fixture")
-    monkeypatch.setattr(clio, "make_client", lambda: FakeClio())
+    monkeypatch.setattr(clio, "make_client", lambda user_id=None: FakeClio())
     c = TestClient(app())
     assert c.post("/auth/dev/login").status_code == 200
     return c

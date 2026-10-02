@@ -134,7 +134,8 @@ def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
             "dependencies": len(deps), "dependency_drops": dict(ddrops)}
 
 
-def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextract: bool = False, conn=None) -> dict:
+def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextract: bool = False, conn=None,
+                 user_id: str | None = None) -> dict:
     """Contract function (called by /sync and after each provider reply). Returns run stats."""
     own = conn is None
     conn = conn or db.connect()
@@ -146,8 +147,12 @@ def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextra
     stats = {"run_id": run_id, "items_changed": 0, "facts_kept": 0, "facts_dropped": 0, "drop_reasons": {}}
     status, error = "error", None
     try:
-        changed = [] if skip_sync else sync.sync(conn, make_client(), matter_id, full=full)
+        changed = [] if skip_sync else sync.sync(conn, make_client(user_id), matter_id, full=full)
         changed += ingest_replies(conn, matter_id)
+        # Items whose extraction failed last time are tried again, even though they have not changed.
+        retry = [i for i in db.get_meta(conn, matter_id, "pending_extraction", [])
+                 if conn.execute("SELECT 1 FROM items WHERE item_id=?", (i,)).fetchone()]
+        changed = list(dict.fromkeys(changed + retry))
         if reextract:   # e.g. after a failed model run: send every stored item through extraction again
             changed = [r["item_id"] for r in conn.execute("SELECT item_id FROM items")]
         stats["items_changed"] = len(changed)
@@ -155,10 +160,12 @@ def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextra
         drops = Counter()
         if changed:
             if llm.available():
-                kept, drops = extract.extract_items(conn, matter_id, changed, run_id)
+                kept, drops, failed = extract.extract_items(conn, matter_id, changed, run_id)
                 stats["facts_kept"] = kept
+                db.set_meta(conn, matter_id, "pending_extraction", failed)
+                stats["extraction_failed"] = len(failed)
             else:
-                extract.delete_facts_for_items(conn, changed)
+                db.set_meta(conn, matter_id, "pending_extraction", changed)   # keep old facts; extract when a key exists
                 log.warning("ANTHROPIC_API_KEY not set: items synced, extraction skipped")
         stats["drop_reasons"] = dict(drops)
         stats["facts_dropped"] = sum(v for k, v in drops.items() if k not in REPAIRS and not k.startswith("dep_")
@@ -170,7 +177,9 @@ def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextra
             stats["analysis"] = analyze.analyze(conn, matter_id)
             graph.label_nodes(conn, matter_id)
         conn.execute("DELETE FROM editions WHERE matter_id=?", (matter_id,))
-        status, error = "ok", None
+        n_failed = stats.get("extraction_failed", 0)
+        status = "partial" if n_failed else "ok"
+        error = f"{n_failed} item(s) could not be extracted and will be retried on the next run" if n_failed else None
     except Exception as e:
         status, error = "error", f"{type(e).__name__}: {e}"
         log.exception("pipeline failed")

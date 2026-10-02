@@ -134,12 +134,15 @@ def insert_dependencies(conn, matter_id, deps, run_id) -> None:
           d["evidence"], run_id) for d in deps])
 
 
-def extract_items(conn, matter_id, item_ids: list[str], run_id: int | None) -> tuple[int, Counter]:
-    """Re-extract the given items. Returns (facts_kept, drop_counts)."""
+def extract_items(conn, matter_id, item_ids: list[str], run_id: int | None) -> tuple[int, Counter, list[str]]:
+    """Re-extract the given items. Returns (facts_kept, drop_counts, failed_item_ids).
+
+    An item's old facts are replaced only after the model has answered for it. If a batch fails the
+    old facts stay, and the item ids come back in `failed` so the next run tries them again.
+    """
     matter_id = str(matter_id)
-    delete_facts_for_items(conn, item_ids)
     if not item_ids:
-        return 0, Counter()
+        return 0, Counter(), []
     rows = conn.execute(
         "SELECT * FROM items WHERE item_id IN (SELECT value FROM json_each(?)) "
         "AND clio_type != 'relationship' ORDER BY item_date, item_id",
@@ -148,7 +151,7 @@ def extract_items(conn, matter_id, item_ids: list[str], run_id: int | None) -> t
     roster_ids = {r["id"] for r in roster}
     header = (f"Today is {date.today().isoformat()}.\n\nRoster:\n{roster_block(roster)}\n\n"
               "Source items:\n\n")
-    kept_total, drops = 0, Counter()
+    kept_total, drops, failed = 0, Counter(), []
     for i, batch in enumerate(batches(rows), start=1):
         sent = {r["item_id"]: dict(r) for r in batch}
         try:
@@ -158,13 +161,15 @@ def extract_items(conn, matter_id, item_ids: list[str], run_id: int | None) -> t
         except Exception as e:  # noqa: BLE001 - one bad batch should not sink the run
             log.error("extraction batch %d failed: %s", i, e)
             drops["batch_failed"] += 1
+            failed += [r["item_id"] for r in batch]
             continue
         facts, d1 = validate.validate_facts(out.get("facts") or [], sent, roster_ids)
         deps, d2 = validate.validate_dependencies(out.get("dependencies") or [], sent, roster_ids)
+        delete_facts_for_items(conn, [r["item_id"] for r in batch])   # the model answered: replace the old facts
         insert_facts(conn, matter_id, facts, run_id)
         insert_dependencies(conn, matter_id, deps, run_id)
         conn.commit()
         kept_total += len(facts)
         drops += d1 + d2
         log.info("batch %d/%d: %d facts kept, %d deps, drops %s", i, len(rows), len(facts), len(deps), dict(d1 + d2))
-    return kept_total, drops
+    return kept_total, drops, failed

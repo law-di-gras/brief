@@ -77,6 +77,9 @@ class ScriptedModel:
                 if "set the surgery" in line:
                     res.append({"node_id": "surgery_date", "fact_id": int(line[1:line.index("]")])})
             return {"nodes": nodes, "resolutions": res}
+        if tool_name == "verify_sentences":
+            sentences = [l for l in user.split("\n") if l.startswith("Sentence ")]
+            return {"verdicts": [{"n": n, "supported": "ready for trial" not in l} for n, l in enumerate(sentences)]}
         if tool_name == "record_front_page":
             ids = {l[1:l.index("]")]: l for l in user.split("\n") if l.startswith("[")}
             asks = [int(i) for i, l in ids.items() if "three written requests" in l]
@@ -92,7 +95,7 @@ def env(tmp_path, monkeypatch):
     model = ScriptedModel()
     monkeypatch.setattr(llm, "available", lambda: True)
     monkeypatch.setattr(llm, "call_json", model)
-    monkeypatch.setattr(run, "make_client", lambda: FakeClio())
+    monkeypatch.setattr(run, "make_client", lambda user_id=None: FakeClio())
     return model
 
 

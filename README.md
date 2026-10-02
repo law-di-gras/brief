@@ -7,7 +7,7 @@ Brief turns a live Clio Manage matter into two connected views:
 - **For the firm's team:** a front page per person, showing what changed since their last visit, a timeline of the case, the case in four cited sentences, the one thing holding the case up, and every place the file disagrees with itself.
 - **For each treating provider:** an attorney-approved page showing whether the case is alive, whether coverage is confirmed, exactly what the firm needs from their office, and their patient's treatment on file. Providers **answer the firm's requests on that page** instead of by email, and their answers flow back into the attorney's front page.
 
-Every sentence on screen links back to the Clio note, email, task or document page it came from. Brief reads Clio and never writes to it.
+Every sentence on screen opens the exact note, email, task or document page it came from, inside Brief, with the supporting quote highlighted, and links to the matter in Clio. Brief reads Clio and never writes to it.
 
 ---
 
@@ -32,6 +32,14 @@ Every fact the model extracts must pass all three checks in `validate.py`, or it
 3. **No number without a source.** Every number, dollar amount and date in a fact or a generated sentence must appear in the cited source text, after normalization (`$22,180.00` matches `22180`, `5 October 2011` matches `2011-10-05`).
 
 Each run records how many facts were kept and dropped, with the reason for each drop, in the `runs` table, shown in the app's debug footer. On the first live run over Sapini the model proposed 399 facts and 389 passed. The 10 dropped were 8 unsourced numbers, 1 non-verbatim quote and 1 malformed fact. Dependencies go through rules 1 and 2.
+
+### Checks on the sentences the model writes
+
+The headline and lead are written by the model, so they get checks of their own. A sentence is kept only if it cites real facts, every number and date in it is in the sources behind them, most of its content words appear in those facts (so a sentence that brings in new subject matter fails), and a second, stricter model pass (Haiku) agrees that the cited facts state what the sentence claims. If a sentence fails, it is dropped; if none survive, the page falls back to the highest-importance cited facts.
+
+### A failed model call never deletes facts
+
+An item's old facts are replaced only after the model has answered for it. If a call fails, the old facts stay, the run is recorded as `partial` with the number of items affected, and those items are retried on the next run.
 
 ### Two more checks on conflicts
 
@@ -323,6 +331,8 @@ The full digest runs once per case. After that, only new or changed items are re
 - Email or SMS notifications to providers. Providers see "updates since your last view" when they open their link.
 - Per-fact sharing controls. Sharing is controlled per section.
 - **Provider page content.** The model labels each fact `shareable` or `internal`, and a provider page can only show `shareable` facts, but that label is model-assigned and can be wrong. The request list on a provider page is also longer and wordier than it should be, and it can include a note that is really the firm's own internal reminder. The attorney's review screen is the safeguard; do not share a page without reading it.
+- **Source links in Clio.** The source viewer inside Brief opens the exact item and page with the quote highlighted, but the "open in Clio" link goes to the matter, not to the individual note or document, because we did not confirm Clio's per-item URLs.
+- **Clio accounts.** Each person's Clio token is stored under their own login and never replaced by someone else's. Background work (a provider reply triggering a re-read) runs as the first account that connected.
 - **Authors of notes.** Clio does not give us a note's author in the fields we read, so two notes by different people count as one origin when checking for conflicts. Emails are checked by sender.
 - **Model variation.** Conflicts and open issues come from a model and vary somewhat between runs. The headline is cached per state of the file, but a rerun can pick different conflicts.
 - **Client photo** is the largest image in the photo-ID PDF, so it is the whole ID card, not a cropped face.

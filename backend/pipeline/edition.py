@@ -6,6 +6,7 @@ merged by the route.
 """
 import hashlib
 import json
+import re
 import logging
 from datetime import date
 
@@ -56,8 +57,56 @@ def facts_version(conn, matter_id) -> str:
     return hashlib.sha256(f"{row['n']}|{row['mx']}|{row['s']}|{extra['c']}|{extra['b']}".encode()).hexdigest()[:16]
 
 
+STOP = set("""this that with from have been were will would could should their there about which while where when
+than then them they what into over under also only such some more most other each both after before since until
+because however still even just very case file matter client firm says said states stated according""".split())
+
+
+def _stems(text: str) -> set[str]:
+    return {w[:5] for w in re.findall(r"[a-z][a-z'-]{3,}", (text or "").lower()) if w not in STOP}
+
+
+def lexically_supported(sentence: str, support_texts: list[str], threshold: float = 0.6) -> bool:
+    """Most of the sentence's content words must appear in the facts it cites. A sentence that brings in
+    new subject matter ("ready for trial") shares almost no words with them and fails."""
+    words = _stems(sentence)
+    if not words:
+        return True
+    have = _stems(" ".join(support_texts))
+    return len(words & have) / len(words) >= threshold
+
+
+VERIFY_SYSTEM = """You check sentences written for a legal case summary against the facts each one cites.
+For every numbered sentence, answer supported=true only if the listed facts state, or directly and
+unavoidably imply, everything the sentence claims. Answer false if it adds any claim, conclusion,
+characterization, prediction, advice or detail that the facts do not contain, or reverses what they say.
+Be strict. Answer by calling the verify_sentences tool."""
+
+VERIFY_SCHEMA = {"type": "object", "properties": {"verdicts": {"type": "array", "items": {
+    "type": "object", "properties": {"n": {"type": "integer"}, "supported": {"type": "boolean"}},
+    "required": ["n", "supported"]}}}, "required": ["verdicts"]}
+
+
+def verify_sentences(sentences: list[dict], facts: dict) -> list[bool] | None:
+    """Ask Haiku whether each cited fact set actually supports its sentence. None = could not check."""
+    if not sentences or not llm.available():
+        return None
+    parts = []
+    for n, s in enumerate(sentences):
+        parts.append(f"Sentence {n}: {s['text']}\nFacts:\n" + "\n".join(f"- {facts[i]['text']}" for i in s["fact_ids"] if i in facts))
+    try:
+        out = llm.call_json(llm.HAIKU, VERIFY_SYSTEM, "\n\n".join(parts), "verify_sentences",
+                            "Record whether each sentence is supported.", VERIFY_SCHEMA, max_tokens=1500)
+    except Exception as e:  # noqa: BLE001 - the deterministic checks still apply
+        log.warning("sentence verification unavailable: %s", e)
+        return None
+    got = {v.get("n"): bool(v.get("supported")) for v in out.get("verdicts") or []}
+    return [got.get(n, False) for n in range(len(sentences))]
+
+
 def _cited(sentence: dict, facts: dict, items: dict) -> dict | None:
-    """Keep a generated sentence only if its fact ids are real and its numbers are in the sources."""
+    """Keep a generated sentence only if its fact ids are real, its numbers are in the sources, and its
+    words are in the facts it cites."""
     fids = [i for i in sentence.get("fact_ids") or [] if i in facts]
     text = (sentence.get("text") or "").strip()
     if not text or not fids:
@@ -67,6 +116,9 @@ def _cited(sentence: dict, facts: dict, items: dict) -> dict | None:
     dates = [items[s]["item_date"] for s in sids if s in items]
     if not validate.check_sentence(text, src, dates):
         log.info("dropped generated sentence (unsourced number): %s", text)
+        return None
+    if not lexically_supported(text, [facts[i]["text"] for i in fids] + [facts[i]["evidence"] for i in fids]):
+        log.info("dropped generated sentence (not in the cited facts): %s", text)
         return None
     return {"text": text, "fact_ids": fids, "source_ids": sids}
 
@@ -140,6 +192,16 @@ def write_front_page(conn, matter_id, since, facts, items, graph, conflicts, iss
         head_raw = {"text": head_raw, "fact_ids": [i for x in lead_raw for i in x.get("fact_ids") or []]}
     headline = _cited(head_raw if isinstance(head_raw, dict) else {}, facts, items)
     lead = [s for s in (_cited(x, facts, items) for x in lead_raw[:MAX_LEAD]) if s]
+    # Second opinion on whether the cited facts really say what each sentence says.
+    candidates = ([headline] if headline else []) + lead
+    verdicts = verify_sentences(candidates, facts)
+    if verdicts is not None:
+        ok = dict(zip(map(id, candidates), verdicts))
+        for s in candidates:
+            if not ok[id(s)]:
+                log.info("dropped generated sentence (not supported by its facts): %s", s["text"])
+        headline = headline if headline and ok[id(headline)] else None
+        lead = [s for s in lead if ok[id(s)]]
     fb_head, fb_lead = _fallback(facts, graph, conflicts)
     headline = headline or fb_head
     lead = lead or fb_lead

@@ -96,8 +96,8 @@ def config():
 # ---------- attorney ----------
 
 @app.post("/matters/{mid}/sync")
-def sync(mid: str):
-    return bridge.run_pipeline(mid)
+def sync(mid: str, request: Request):
+    return bridge.run_pipeline(mid, user_id=request.state.user["id"] if request.state.user["id"] != "me" else None)
 
 
 DEFAULT_SINCE_DAYS = 14

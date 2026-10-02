@@ -73,10 +73,11 @@ class ClioReadOnly:
         return resp
 
 
-def make_client():
-    """The Clio client for this process: live Clio, or the seed fixture when CLIO_SOURCE=fixture."""
+def make_client(user_id=None):
+    """The Clio client: live Clio as `user_id` (default: the acting user, else the service account),
+    or the seed fixture when CLIO_SOURCE=fixture."""
     if os.environ.get("CLIO_SOURCE") == "fixture":
         from backend.pipeline.fixture_clio import FixtureClio
         return FixtureClio()
     from backend.pipeline import auth
-    return ClioReadOnly(auth.access_token)
+    return ClioReadOnly(lambda force=False: auth.access_token(user_id, force=force))
