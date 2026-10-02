@@ -138,6 +138,7 @@ def edition(mid: str, request: Request, since: str | None = None):
         "headline": ed.get("headline"),
         "lead": ed.get("lead") or [],
         "blocker": ed.get("blocker"),
+        "front_page_pending": ed.get("front_page_pending", False),
         "kpis": det.kpis(mid),
         "corrections": det.corrections(mid),
         "still_waiting": det.still_waiting(mid),

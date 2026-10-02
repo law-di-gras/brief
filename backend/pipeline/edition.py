@@ -7,6 +7,7 @@ merged by the route.
 import hashlib
 import json
 import re
+import threading
 import logging
 from datetime import date
 
@@ -150,14 +151,42 @@ def _fallback(facts, graph, conflicts) -> tuple[dict, list]:
     return cite(head), lead
 
 
-def write_front_page(conn, matter_id, since, facts, items, graph, conflicts, issues) -> tuple[dict, list]:
+_writing: set[str] = set()          # front pages being written in the background, by cache key
+_writing_lock = threading.Lock()
+
+
+def write_front_page(conn, matter_id, since, facts, items, graph, conflicts, issues,
+                     wait: bool = True) -> tuple[dict, list, bool]:
+    """Returns (headline, lead, pending). With wait=False a cache miss returns the no-AI front page at once
+    and writes the model's version in the background, so a page load never waits on the model."""
     key = hashlib.sha256(f"{matter_id}|{facts_version(conn, matter_id)}|{(since or '')[:10]}".encode()).hexdigest()
     row = conn.execute("SELECT headline_json, lead_json FROM editions WHERE cache_key=?", (key,)).fetchone()
     if row:
-        return json.loads(row["headline_json"]), json.loads(row["lead_json"])
+        return json.loads(row["headline_json"]), json.loads(row["lead_json"]), False
     if not llm.available() or not facts:
-        return _fallback(facts, graph, conflicts)
+        return (*_fallback(facts, graph, conflicts), False)
+    if wait:
+        return (*_generate_front_page(conn, key, matter_id, since, facts, items, graph, conflicts, issues), False)
 
+    with _writing_lock:
+        start = key not in _writing
+        _writing.add(key)
+    if start:
+        def work():
+            c = db.connect()
+            try:
+                _generate_front_page(c, key, matter_id, since, facts, items, graph, conflicts, issues)
+            except Exception:  # noqa: BLE001 - the fallback page stays up
+                log.exception("background front page failed")
+            finally:
+                c.close()
+                with _writing_lock:
+                    _writing.discard(key)
+        threading.Thread(target=work, daemon=True).start()
+    return (*_fallback(facts, graph, conflicts), True)
+
+
+def _generate_front_page(conn, key, matter_id, since, facts, items, graph, conflicts, issues) -> tuple[dict, list]:
     since_d = (since or "")[:10]
     in_conflict = {i for c in conflicts for i in c["fact_ids"]}
     in_issue = {i for it in issues for i in it["fact_ids"]}
@@ -267,7 +296,7 @@ def product_blocker(conn, matter_id, graph: dict, facts: dict, items: dict) -> d
     return None
 
 
-def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
+def build_edition(matter_id, since: str | None = None, conn=None, wait: bool = True) -> dict:
     own = conn is None
     conn = conn or db.connect()
     try:
@@ -297,7 +326,8 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
             issues.append(it)
 
         graph = build_graph(conn, matter_id, today)
-        headline, lead = write_front_page(conn, matter_id, since, facts, items, graph, conflicts, issues)
+        headline, lead, pending = write_front_page(conn, matter_id, since, facts, items, graph, conflicts, issues,
+                                                   wait=wait)
 
         since_d = (since or "")[:10]
         updates = []
@@ -322,6 +352,7 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
             "generated_at": db.now_iso(),
             "since": since,
             "facts_version": facts_version(conn, matter_id),
+            "front_page_pending": pending,      # the model's headline is being written; reload shortly
             "headline": _with_evidence(headline, facts),
             "lead": [_with_evidence(s, facts) for s in lead],
             "timeline": build_timeline(facts, items, conflicts, issues, today),

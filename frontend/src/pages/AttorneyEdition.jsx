@@ -137,6 +137,12 @@ export default function AttorneyEdition({ matterId }) {
     }
   }, [base]);
   useEffect(() => { load(); }, [load]);
+  // While the model writes the headline in the background, check back quietly.
+  useEffect(() => {
+    if (!d?.front_page_pending) return;
+    const t = setTimeout(load, 15000);
+    return () => clearTimeout(t);
+  }, [d, load]);
 
   const act = (fn) => async () => { setBusy(true); try { await fn(); await load(); } catch (e) { setErr(e.message); } setBusy(false); };
 
@@ -209,6 +215,9 @@ export default function AttorneyEdition({ matterId }) {
           <h2 className="font-serif text-3xl font-bold leading-tight"><Cited s={d.headline} onCite={setCite} /></h2>
         ) : (
           <h2 className="font-serif text-2xl text-stone-500">No headline yet. Run the pipeline.</h2>
+        )}
+        {d.front_page_pending && (
+          <p className="mt-1 text-xs text-stone-500">Showing the top cited facts while the summary is written. It updates by itself.</p>
         )}
         <p className="mt-3 font-serif text-lg leading-relaxed">
           {lead.map((s, i) => <span key={i}><Cited s={s} onCite={setCite} /> </span>)}

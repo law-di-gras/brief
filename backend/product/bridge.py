@@ -78,7 +78,7 @@ def fallback_blocker(matter_id):
 def build_edition(matter_id, since=None):
     ed = None
     if _build_edition:
-        ed = _build_edition(matter_id, since)
+        ed = _build_edition(matter_id, since, wait=False)   # page loads never wait on the model
     if not ed:
         rows = db.q("SELECT * FROM editions WHERE matter_id=? ORDER BY created_at DESC LIMIT 1", (str(matter_id),))
         ed = {"headline": db.J(rows[0]["headline_json"]) if rows else None,
