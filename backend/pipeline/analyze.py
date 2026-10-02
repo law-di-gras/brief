@@ -63,7 +63,8 @@ def load_facts(conn, matter_id) -> dict[int, dict]:
 
 def item_map(conn, matter_id) -> dict[str, dict]:
     return {r["item_id"]: dict(r) for r in conn.execute(
-        "SELECT item_id, item_date, text, title, clio_type, source FROM items")}
+        "SELECT i.item_id, i.item_date, i.text, i.title, i.clio_type, i.source, i.people_json, d.doc_type "
+        "FROM items i LEFT JOIN documents d ON i.clio_type='document' AND d.doc_id=i.clio_id")}
 
 
 def fact_date(f: dict, items: dict) -> str | None:
@@ -78,6 +79,34 @@ def said_date(f: dict, items: dict) -> str | None:
     """When the file recorded the fact (latest source date)."""
     dates = [items[s]["item_date"] for s in f["source_ids"] if s in items and items[s]["item_date"]]
     return max(dates) if dates else f.get("event_date")
+
+
+KIND = {"matter": "record", "note": "note", "communication": "email", "task": "task",
+        "calendar_entry": "task", "expense": "record", "document": "document", "provider_reply": "portal"}
+
+
+def origin(item: dict) -> tuple:
+    """Where a source really comes from: every page of one document is one origin."""
+    kind = KIND.get(item.get("clio_type"), "other")
+    if kind == "document":   # a pleading and a medical bill are different hands; two bills are not
+        return (f"document:{item.get('doc_type') or 'other'}", item["item_id"].split(":")[1])
+    if kind == "email":
+        sender = next((p.get("id") for p in json.loads(item.get("people_json") or "[]") if p.get("role") == "sender"), None)
+        return (kind, item["item_id"], sender)
+    return (kind, item["item_id"])
+
+
+def independent(source_ids, items: dict) -> bool:
+    """Two statements disagree only if they come from different origins that are not the same kind of thing
+    from the same hand: different kinds (record, note, email, task, document, reply), or emails from
+    different senders, or documents of different types. Two pages of one PDF, or two notes, do not count."""
+    origins = {origin(items[s]) for s in source_ids if s in items}
+    if len(origins) < 2:
+        return False
+    kinds = {o[0] for o in origins}
+    if len(kinds) > 1:
+        return True
+    return any(o[0] == "email" for o in origins) and len({o[2] for o in origins}) > 1
 
 
 def fingerprint(fact_ids) -> str:
@@ -120,6 +149,9 @@ def analyze(conn, matter_id) -> dict:
             # A conflict is real only when its facts come from at least two different items.
             if len(fids) < 2 or len(set(sources)) < 2 or len(frozenset().union(*sources)) < 2:
                 drops["conflict_single_source"] += 1
+                continue
+            if not independent(set().union(*sources), items):
+                drops["conflict_not_independent"] += 1
                 continue
             expl = (c.get("explanation") or "").strip()
             src_texts = [items[s]["text"] for i in fids for s in facts[i]["source_ids"] if s in items]
