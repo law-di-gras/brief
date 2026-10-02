@@ -134,8 +134,12 @@ def write_front_page(conn, matter_id, since, facts, items, graph, conflicts, iss
         log.error("front page generation failed: %s", e)
         return _fallback(facts, graph, conflicts)
 
-    headline = _cited(out.get("headline") or {}, facts, items)
-    lead = [s for s in (_cited(x, facts, items) for x in (out.get("lead") or [])[:MAX_LEAD]) if s]
+    lead_raw = [x for x in (out.get("lead") or []) if isinstance(x, dict)]
+    head_raw = out.get("headline")
+    if isinstance(head_raw, str):   # the model sometimes returns a bare string: cite the lead's facts for it
+        head_raw = {"text": head_raw, "fact_ids": [i for x in lead_raw for i in x.get("fact_ids") or []]}
+    headline = _cited(head_raw if isinstance(head_raw, dict) else {}, facts, items)
+    lead = [s for s in (_cited(x, facts, items) for x in lead_raw[:MAX_LEAD]) if s]
     fb_head, fb_lead = _fallback(facts, graph, conflicts)
     headline = headline or fb_head
     lead = lead or fb_lead

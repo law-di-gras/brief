@@ -113,7 +113,7 @@ def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
             "dependencies": len(deps), "dependency_drops": dict(ddrops)}
 
 
-def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, conn=None) -> dict:
+def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, reextract: bool = False, conn=None) -> dict:
     """Contract function (called by /sync and after each provider reply). Returns run stats."""
     own = conn is None
     conn = conn or db.connect()
@@ -127,6 +127,8 @@ def run_pipeline(matter_id, full: bool = False, skip_sync: bool = False, conn=No
     try:
         changed = [] if skip_sync else sync.sync(conn, make_client(), matter_id, full=full)
         changed += ingest_replies(conn, matter_id)
+        if reextract:   # e.g. after a failed model run: send every stored item through extraction again
+            changed = [r["item_id"] for r in conn.execute("SELECT item_id FROM items")]
         stats["items_changed"] = len(changed)
 
         drops = Counter()
@@ -170,6 +172,7 @@ def main():
     p = argparse.ArgumentParser(description="Run the Brief pipeline for one matter")
     p.add_argument("--matter-id", default=os.environ.get("MATTER_ID"), required=not os.environ.get("MATTER_ID"))
     p.add_argument("--full", action="store_true", help="ignore updated_since and resync everything")
+    p.add_argument("--reextract", action="store_true", help="send every stored item through extraction again")
     p.add_argument("--fixture-facts", action="store_true", help="load dev/fixtures/facts.json instead of calling the model")
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -178,7 +181,7 @@ def main():
         sync.sync(conn, make_client(), args.matter_id, full=True)
         print(json.dumps(load_fixture_facts(conn, args.matter_id), indent=2))
         return
-    print(json.dumps(run_pipeline(args.matter_id, full=args.full), indent=2))
+    print(json.dumps(run_pipeline(args.matter_id, full=args.full, reextract=args.reextract), indent=2))
 
 
 if __name__ == "__main__":
