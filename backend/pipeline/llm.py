@@ -22,7 +22,10 @@ class LLMError(RuntimeError):
 def client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(max_retries=4)
+        headers = {}
+        if os.environ.get("ANTHROPIC_WORKSPACE_ID"):   # needed when the API key is not scoped to a workspace
+            headers["anthropic-workspace-id"] = os.environ["ANTHROPIC_WORKSPACE_ID"]
+        _client = anthropic.Anthropic(max_retries=4, default_headers=headers or None)
     return _client
 
 
