@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { get, post, fmtDate, fmtShort, fmtMoney } from "../api.js";
-import Timeline from "../components/Timeline.jsx";
+import { StatTiles, MoneyBars, DotTimeline } from "../components/Visuals.jsx";
 import BlockerCard from "../components/BlockerCard.jsx";
 import SourceViewer from "../components/SourceViewer.jsx";
 import ProviderPanel from "../components/ProviderPanel.jsx";
@@ -86,9 +86,9 @@ function ConflictCard({ c, onCite }) {
 }
 
 // A collapsed section with its count in the summary, so what is hidden is still visible at a glance.
-function Section({ title, count, note, red, children }) {
+function Section({ id, title, count, note, red, children }) {
   return (
-    <details className="group border-b border-rule">
+    <details id={id} className="group border-b border-rule">
       <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3 py-3 hover:bg-amber-50">
         <span className="flex items-baseline gap-2">
           <span className="text-stone-400 transition-transform group-open:rotate-90">▸</span>
@@ -123,6 +123,7 @@ export default function AttorneyEdition({ matterId }) {
   const [err, setErr] = useState(null);
   const [allComing, setAllComing] = useState(false);
   const [allOther, setAllOther] = useState(false);
+  const [fullLead, setFullLead] = useState(false);
   const base = `/matters/${matterId}`;
 
   const load = useCallback(async () => {
@@ -153,6 +154,17 @@ export default function AttorneyEdition({ matterId }) {
   const newReplies = (d.replies || []).filter((r) => r.status === "new").length;
   const shared = (d.providers || []).filter((p) => p.share).length;
   const lc = d.last_client_contact;
+  const openSection = (id) => () => {
+    const el = document.getElementById(id);
+    if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  };
+  const tiles = [
+    d.blocker && !d.blocker.resolved && { value: d.blocker.days_waiting, label: "days the case has been held up", alert: true },
+    { value: overdue, label: overdue === 1 ? "overdue task" : "overdue tasks", alert: overdue > 0, onClick: openSection("sec-coming") },
+    { value: nConflicts, label: nConflicts === 1 ? "place the file contradicts itself" : "places the file contradicts itself", alert: nConflicts > 0, onClick: openSection("sec-corrections") },
+    { value: lc ? lc.days_ago : null, label: "days since anyone spoke to the client", onClick: lc ? () => setCite({ ...lc, text: lc.title }) : null },
+  ].filter(Boolean);
+  const lead = fullLead ? d.lead : d.lead.slice(0, 2);
 
   return (
     <div className="mx-auto max-w-4xl px-6 pb-16">
@@ -190,6 +202,8 @@ export default function AttorneyEdition({ matterId }) {
         </div>
       )}
 
+      <div className="mt-5"><StatTiles tiles={tiles} /></div>
+
       <article className="mt-6">
         {d.headline ? (
           <h2 className="font-serif text-3xl font-bold leading-tight"><Cited s={d.headline} onCite={setCite} /></h2>
@@ -197,28 +211,26 @@ export default function AttorneyEdition({ matterId }) {
           <h2 className="font-serif text-2xl text-stone-500">No headline yet. Run the pipeline.</h2>
         )}
         <p className="mt-3 font-serif text-lg leading-relaxed">
-          {d.lead.map((s, i) => <span key={i}><Cited s={s} onCite={setCite} /> </span>)}
+          {lead.map((s, i) => <span key={i}><Cited s={s} onCite={setCite} /> </span>)}
+          {d.lead.length > 2 && (
+            <button className="ml-1 font-sans text-xs font-medium text-stone-500 hover:text-ink" onClick={() => setFullLead(!fullLead)}>
+              {fullLead ? "less" : "more"}
+            </button>
+          )}
         </p>
-        <p className="mt-1 text-xs text-stone-400">Click any sentence to see where it came from.</p>
       </article>
 
       <div className="mt-6"><BlockerCard blocker={d.blocker} onCite={setCite} /></div>
 
-      <div className="mt-6 grid grid-cols-2 gap-px border border-rule bg-rule md:grid-cols-4">
-        {kpis.map((k) => <Kpi key={k.slot} k={k} onCite={setCite} />)}
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <MoneyBars kpis={d.kpis} onCite={setCite} />
+        <DotTimeline data={d.timeline} onCite={setCite} />
       </div>
-
-      <p className="mt-3 text-sm text-stone-600">
-        {lc ? (
-          <>Last talked to the client <b>{lc.days_ago} days ago</b>:{" "}
-            <Cited s={{ ...lc, text: lc.title }} onCite={setCite} /></>
-        ) : "No client contact on file."}
-        {spend && <> · Firm has spent <span className="cite" onClick={() => spend.source_ids.length && setCite({ text: `Firm spend: ${spend.field_name}`, source_ids: spend.source_ids.slice(0, 5) })}><b>{fmtMoney(spend.amount)}</b></span> ({spend.field_name})</>}
-      </p>
+      <p className="mt-2 text-xs text-stone-400">Every sentence, bar and dot opens the note, email or page it came from.</p>
 
       {/* ---------- everything else: one click away, with a count so nothing hides ---------- */}
       <div className="mt-8 border-t border-ink">
-        <Section title="Where the file disagrees with itself" count={nConflicts + nIssues}
+        <Section id="sec-corrections" title="Where the file disagrees with itself" count={nConflicts + nIssues}
           note={`${nConflicts} ${nConflicts === 1 ? "conflict" : "conflicts"} · ${nIssues} open ${nIssues === 1 ? "issue" : "issues"}`} red={nConflicts > 0}>
           {d.corrections.conflicts.map((c) => (
             c.sides?.length > 1
@@ -275,7 +287,7 @@ export default function AttorneyEdition({ matterId }) {
           </ul>
         </Section>
 
-        <Section title="Coming up, next 21 days" count={d.coming_up.length}
+        <Section id="sec-coming" title="Coming up, next 21 days" count={d.coming_up.length}
           note={overdue ? `${overdue} overdue` : `${d.coming_up.length} scheduled`} red={overdue > 0}>
           <ul className="space-y-1.5">
             {(allComing ? d.coming_up : d.coming_up.filter((c, i) => c.overdue || i < overdue + COMING_UP_SHOWN)).map((c) => (
@@ -293,8 +305,11 @@ export default function AttorneyEdition({ matterId }) {
           )}
         </Section>
 
-        <Section title="Timeline" count={d.timeline?.events?.length || 0} note="key dated events, incident to today">
-          <Timeline data={d.timeline} onCite={setCite} />
+        <Section title="Key numbers in detail" note="each field as Clio has it">
+          <div className="grid grid-cols-2 gap-px border border-rule bg-rule md:grid-cols-4">
+            {kpis.map((k) => <Kpi key={k.slot} k={k} onCite={setCite} />)}
+          </div>
+          {lc && <p className="mt-3 text-sm text-stone-600">Last client contact, {fmtDate(lc.date)}: <Cited s={{ ...lc, text: lc.title }} onCite={setCite} /></p>}
         </Section>
 
         <Section title="Providers and replies" count={(d.providers || []).length}
