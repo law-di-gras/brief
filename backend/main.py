@@ -1,5 +1,6 @@
 import faulthandler
 import os
+import threading
 import signal
 from datetime import timedelta
 from pathlib import Path
@@ -24,6 +25,15 @@ from backend.product import deterministic as det
 faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 app = FastAPI(title="Brief")
+
+
+@app.on_event("startup")
+async def one_request_thread():
+    """Run sync request handlers one at a time. Many SQLite connections opening and closing at once in one
+    process deadlocked inside SQLite's file locking (threads stuck in connect/close at 0% CPU). Each page
+    request takes well under a second, so serializing them costs little and removes the stall."""
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens = int(os.environ.get("REQUEST_THREADS", "1"))
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -279,7 +289,8 @@ def reply(token: str, body: ReplyIn, bg: BackgroundTasks, request: Request):
     except replies.ReplyError as e:
         raise HTTPException(400, str(e))
     # Saved first so the attorney inbox has it right away, then the pipeline picks it up as a portal item.
-    bg.add_task(bridge.run_pipeline, out["matter_id"])
+    # Its own thread, not the request pool: a pipeline run can take minutes and must not hold up page loads.
+    threading.Thread(target=bridge.run_pipeline, args=(out["matter_id"],), daemon=True).start()
     return {"ok": True, "created_at": out["created_at"]}
 
 
