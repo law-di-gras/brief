@@ -26,34 +26,52 @@ def _contact_id(raw) -> str:
     return raw if ":" in raw else f"contact:{raw}"
 
 
+FIELD_LABELS = {"date": "Date given", "sent_on": "Sent on", "note": "Note"}
+
+
 def ingest_replies(conn, matter_id) -> list[str]:
-    """Provider replies (our DB, written by product/replies.py) become items with source='portal'."""
+    """Provider replies (our DB, written by product/replies.py) become items with source='portal'.
+
+    One submission (same share, request and time) is one item, however many fields it carried, so
+    "date given" and "sent on" are read together and not as two replies that might disagree.
+    """
     roster = {r["id"]: r for r in db.get_meta(conn, matter_id, "roster", [])}
     rows = conn.execute(
-        "SELECT r.*, s.snapshot_json FROM provider_replies r JOIN shares s ON s.token = r.token WHERE s.matter_id=?",
-        (str(matter_id),)).fetchall()
-    changed = []
+        "SELECT r.*, s.snapshot_json FROM provider_replies r JOIN shares s ON s.token = r.token WHERE s.matter_id=? "
+        "ORDER BY r.id", (str(matter_id),)).fetchall()
+    groups: dict[tuple, list] = {}
     for r in rows:
-        cid = _contact_id(r["provider_contact_id"])
+        groups.setdefault((r["token"], r["request_ref"], r["created_at"]), []).append(r)
+
+    changed, keep = [], set()
+    for grp in groups.values():
+        first = grp[0]
+        cid = _contact_id(first["provider_contact_id"])
         who = (roster.get(cid) or {}).get("name") or cid
-        received = (r["created_at"] or "")[:10]
+        received = (first["created_at"] or "")[:10]
         lines = [f"Reply from {who} through the provider share page, received {received}."]
-        if r["request_ref"]:
+        if first["request_ref"]:
             # The ref is an opaque hash; the approved snapshot has what the firm actually asked for.
             asked = {q.get("ref"): q.get("what") for q in
-                     ((db.J(r["snapshot_json"], {}) or {}).get("sections", {}).get("requests") or [])}
-            lines.append(f"In answer to the firm's request for: {asked.get(r['request_ref']) or r['request_ref']}")
-        if r["field"] or r["value"]:
-            lines.append(f"{r['field'] or 'Answer'}: {r['value'] or ''}")
-        if r["note"]:
-            lines.append(f"Note: {r['note']}")
-        item = dict(item_id=f"portal:{r['id']}", source="portal", clio_type="provider_reply", clio_id=None,
+                     ((db.J(first["snapshot_json"], {}) or {}).get("sections", {}).get("requests") or [])}
+            lines.append(f"In answer to the firm's request for: {asked.get(first['request_ref']) or first['request_ref']}")
+        for r in grp:
+            if r["value"] and r["field"] != "note":
+                lines.append(f"{FIELD_LABELS.get(r['field'], r['field'] or 'Answer')}: {r['value']}")
+        note = next((r["note"] or r["value"] for r in grp if r["note"] or r["field"] == "note"), "")
+        if note:
+            lines.append(f"Note: {note}")
+        item = dict(item_id=f"portal:{first['id']}", source="portal", clio_type="provider_reply", clio_id=None,
                     title=f"Reply from {who}", text="\n".join(lines)[:MAX_REPLY_CHARS], item_date=received or None,
                     people=[{"id": cid, "name": who, "role": "provider"}], raw=None)
+        keep.add(item["item_id"])
         if sync.upsert_item(conn, matter_id, item):
             changed.append(item["item_id"])
+    stale = [r["item_id"] for r in conn.execute("SELECT item_id FROM items WHERE source='portal'")
+             if r["item_id"] not in keep]
+    sync.delete_items(conn, stale)     # replies saved in an older one-item-per-field layout
     conn.commit()
-    return changed
+    return changed + stale
 
 
 def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
