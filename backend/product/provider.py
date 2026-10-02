@@ -149,14 +149,17 @@ def revoke_share(token):
     return get_share(token)
 
 
-def public_view(token, user_agent=""):
+def public_view(token, user_agent="", session_started=None, log_view=True):
     """The provider page. Snapshot + view log + this token's own replies, nothing else."""
     s = get_share(token)
     if not s or not s["live"]:
         return None
-    prev = db.q("SELECT MAX(viewed_at) AS t FROM share_views WHERE token=?", (token,))[0]["t"]
-    db.x("INSERT INTO share_views(token, viewed_at, ua_hash) VALUES (?,?,?)",
-         (token, now(), hashlib.sha256((user_agent or "").encode()).hexdigest()[:16]))
+    # "Since your last view" means since the session before this one, so a reload doesn't zero it.
+    started = session_started or now()
+    prev = db.q("SELECT MAX(viewed_at) AS t FROM share_views WHERE token=? AND viewed_at<?", (token, started))[0]["t"]
+    if log_view:
+        db.x("INSERT INTO share_views(token, viewed_at, ua_hash) VALUES (?,?,?)",
+             (token, started, hashlib.sha256((user_agent or "").encode()).hexdigest()[:16]))
     snap = s["snapshot"]
     updates = snap.get("sections", {}).get("updates")
     new = None

@@ -107,3 +107,14 @@ CREATE TABLE IF NOT EXISTS oauth_tokens(
   id INTEGER PRIMARY KEY CHECK (id = 1),
   access_token TEXT NOT NULL, refresh_token TEXT, expires_at REAL
 );
+
+-- Firm and provider sessions (product/sessions.py). Only a hash of the cookie value is stored.
+CREATE TABLE IF NOT EXISTS sessions(
+  sid_hash TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,               -- firm | provider
+  user_id TEXT, user_name TEXT,     -- firm sessions: the Clio user
+  token TEXT,                       -- provider sessions: the share this session belongs to
+  ua_hash TEXT,
+  created_at TEXT, last_seen_at TEXT, expires_at TEXT,
+  revoked INTEGER NOT NULL DEFAULT 0
+);

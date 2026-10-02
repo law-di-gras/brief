@@ -10,11 +10,11 @@ except ImportError:
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from backend import db
-from backend.product import bridge, provider, replies
+from backend.product import bridge, provider, replies, sessions
 from backend.product import deterministic as det
 
 app = FastAPI(title="Brief")
@@ -27,6 +27,57 @@ try:
     app.include_router(auth_router)
 except Exception:
     pass
+
+
+# ---------- sessions ----------
+
+@app.middleware("http")
+async def require_firm_session(request: Request, call_next):
+    """Everything the firm sees needs a firm session. /p/* is the provider side and has its own."""
+    request.state.user = {"id": "me", "name": None}
+    if sessions.auth_required() and request.url.path.startswith(sessions.PROTECTED) and request.method != "OPTIONS":
+        s = sessions.firm_session(request)
+        if not s:
+            return JSONResponse({"detail": "Sign in to continue."}, status_code=401)
+        request.state.user = {"id": s["user_id"], "name": s["user_name"]}
+    return await call_next(request)
+
+
+@app.get("/auth/me")
+def me(request: Request):
+    base = {"auth_required": sessions.auth_required(), "fixture_mode": sessions.fixture_mode()}
+    s = sessions.firm_session(request) if sessions.auth_required() else None
+    if not s:
+        return {**base, "authenticated": not sessions.auth_required(), "user": None, "sessions": []}
+    return {**base, "authenticated": True, "user": {"id": s["user_id"], "name": s["user_name"]},
+            "sessions": sessions.active_for_user(s["user_id"], request.cookies.get(sessions.FIRM_COOKIE))}
+
+
+@app.post("/auth/dev/login")
+def dev_login(request: Request):
+    """Fixture sign-in: only exists when the app is reading the seed file instead of Clio."""
+    if not sessions.fixture_mode():
+        raise HTTPException(404, "Not found")
+    from backend.pipeline.clio import make_client
+    u = make_client().get("/users/who_am_i.json", {"fields": "id,name"})["data"]
+    raw, _ = sessions.create("firm", sessions.FIRM_TTL, user_id=f"user:{u['id']}", user_name=u.get("name"),
+                             user_agent=request.headers.get("user-agent", ""))
+    resp = JSONResponse({"ok": True})
+    sessions.set_cookie(resp, sessions.FIRM_COOKIE, raw, sessions.FIRM_TTL)
+    return resp
+
+
+@app.post("/auth/logout")
+def logout(request: Request, everywhere_else: bool = False):
+    raw = request.cookies.get(sessions.FIRM_COOKIE)
+    s = sessions.firm_session(request)
+    resp = JSONResponse({"ok": True})
+    if s and everywhere_else:
+        sessions.revoke_others(s["user_id"], raw)
+    elif raw:
+        sessions.revoke(raw)
+        resp.delete_cookie(sessions.FIRM_COOKIE, path="/")
+    return resp
 
 
 def need(v, msg="Not found"):
@@ -67,7 +118,8 @@ def photo(mid: str):
 
 
 @app.get("/matters/{mid}/edition")
-def edition(mid: str, since: str | None = None, user: str = "me"):
+def edition(mid: str, request: Request, since: str | None = None):
+    user = request.state.user["id"]
     need(det.matter(mid), "Matter not loaded. Run the sync or dev/load_seed.py.")
     since_source = "query" if since else None
     if not since:
@@ -101,7 +153,8 @@ def timeline(mid: str):
 
 
 @app.post("/matters/{mid}/visit")
-def visit(mid: str, user: str = "me"):
+def visit(mid: str, request: Request):
+    user = request.state.user["id"]
     stamp = provider.now()
     db.x("INSERT INTO visits(user_id, matter_id, last_visit_at) VALUES (?,?,?)"
          " ON CONFLICT(user_id, matter_id) DO UPDATE SET last_visit_at=excluded.last_visit_at", (user, mid, stamp))
@@ -167,6 +220,7 @@ def refresh(token: str, body: RefreshIn | None = None):
 @app.post("/shares/{token}/revoke")
 def revoke(token: str):
     need(provider.revoke_share(token))
+    sessions.revoke_for_share(token)
     return {"revoked": True}
 
 
@@ -190,12 +244,28 @@ class ReplyIn(BaseModel):
 
 @app.get("/p/{token}")
 def provider_page(token: str, request: Request):
-    return need(provider.public_view(token, request.headers.get("user-agent", "")),
-                "This link has expired or been revoked.")
+    """Opening a live link starts a provider session. One session is one logged view."""
+    gone = "This link has expired or been revoked."
+    share = need(provider.get_share(token), gone)
+    if not share["live"]:
+        raise HTTPException(404, gone)
+    ua = request.headers.get("user-agent", "")
+    s, raw = sessions.provider_session(request, token), None
+    if s:
+        started = s["created_at"]
+    else:
+        raw, started = sessions.create("provider", sessions.PROVIDER_TTL, token=token, user_agent=ua)
+    page = need(provider.public_view(token, ua, session_started=started, log_view=raw is not None), gone)
+    resp = JSONResponse(page)
+    if raw:
+        sessions.set_cookie(resp, sessions.provider_cookie(token), raw, sessions.PROVIDER_TTL, path=f"/p/{token}")
+    return resp
 
 
 @app.post("/p/{token}/reply")
-def reply(token: str, body: ReplyIn, bg: BackgroundTasks):
+def reply(token: str, body: ReplyIn, bg: BackgroundTasks, request: Request):
+    if not sessions.provider_session(request, token):
+        raise HTTPException(401, "Your session ended. Reload the page and send again.")
     try:
         out = replies.submit(token, body.request_ref, body.fields, body.note)
     except replies.ReplyError as e:
