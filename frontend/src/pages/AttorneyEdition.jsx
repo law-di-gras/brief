@@ -64,6 +64,7 @@ export default function AttorneyEdition({ matterId }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [allComing, setAllComing] = useState(false);
+  const [allOther, setAllOther] = useState(false);
   const base = `/matters/${matterId}`;
 
   const load = useCallback(async () => {
@@ -151,6 +152,24 @@ export default function AttorneyEdition({ matterId }) {
                 facts={i.facts} onCite={setCite} />
             ))}
             {!d.corrections.conflicts.length && !d.corrections.issues.length && <p className="py-3 text-sm text-stone-500">Nothing flagged.</p>}
+            {(d.corrections.other.conflicts.length + d.corrections.other.issues.length) > 0 && (
+              <div className="py-2">
+                <Toggle open={allOther} onClick={() => setAllOther(!allOther)}>
+                  Show {d.corrections.other.conflicts.length} other discrepancies and {d.corrections.other.issues.length} other open issues
+                </Toggle>
+                {allOther && (
+                  <div className="mt-1">
+                    {d.corrections.other.conflicts.map((c) => (
+                      <Correction key={`oc${c.id}`} badge="Discrepancy" title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
+                    ))}
+                    {d.corrections.other.issues.map((i) => (
+                      <Correction key={`oi${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
+                        sub={`Open ${i.days_open} days`} facts={i.facts} onCite={setCite} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         </main>
 

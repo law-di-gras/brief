@@ -113,6 +113,16 @@ def open_conflicts():
     return out
 
 
+SHOWN = 5   # conflicts and open issues given room on the front page; the rest sit behind a toggle
+
+
+def headline_conflicts():
+    """The few conflicts worth a lawyer's attention: high severity, those that move a KPI first."""
+    cs = [c for c in open_conflicts() if c.get("severity") == "high"]
+    cs.sort(key=lambda c: (c.get("kpi_affected") is None, len(c["fact_ids"]), c["id"]))
+    return cs[:SHOWN]
+
+
 def contacts(matter_id):
     """{contact_id: {name, description}} from the roster, plus the client."""
     out = {}
@@ -199,7 +209,7 @@ def kpis(matter_id):
         if name:
             cfs.append((name, cf.get("value")))
     slots = ai.map_kpi_fields([n for n, _ in cfs])
-    conflicts = {c["kpi_affected"]: c for c in open_conflicts() if c.get("kpi_affected")}
+    conflicts = {c["kpi_affected"]: c for c in headline_conflicts() if c.get("kpi_affected")}
     out = []
     for slot, label in KPI_LABELS.items():
         hit = next(((n, v) for n, v in cfs if slots.get(n) == slot and v not in (None, "")), None)
@@ -341,18 +351,30 @@ def last_client_contact(matter_id):
             "source_ids": best[2], "evidence": best[3]}
 
 
+def ranked_issues():
+    """Unresolved issues first, the most-mentioned and longest-open at the top."""
+    out = []
+    for i in db.q("SELECT * FROM issues"):
+        first = local_date(i["first_flagged"])
+        out.append(dict(i, fact_ids=J(i["fact_ids_json"], []), resolved=i["resolved_by_fact"] is not None,
+                        days_open=(today() - first).days if first else None))
+    out.sort(key=lambda i: (i["resolved"], -(i["mentions"] or 0), -(i["days_open"] or 0)))
+    return out
+
+
 def timeline(matter_id, limit=14):
+    # Red markers only for what the page itself headlines, so a marker always has a card beneath it.
     flagged = {}
-    for c in open_conflicts():
+    for c in headline_conflicts():
         for fid in c["fact_ids"]:
             flagged[fid] = "conflict"
-    for i in db.q("SELECT * FROM issues WHERE resolved_by_fact IS NULL"):
-        for fid in J(i["fact_ids_json"], []):
-            flagged.setdefault(fid, "issue")
-    fs = [f for f in facts() if local_date(f["event_date"]) and local_date(f["event_date"]) <= today()]
-    for f in fs:
-        if f["is_open_issue"]:
-            flagged.setdefault(f["id"], "issue")
+    all_facts = {f["id"]: f for f in facts()}
+    for i in [i for i in ranked_issues() if not i["resolved"]][:SHOWN]:
+        # one marker per issue: where it first showed up, not every fact that mentions it
+        dated = [all_facts[x] for x in i["fact_ids"] if x in all_facts and all_facts[x]["event_date"]]
+        if dated:
+            flagged.setdefault(min(dated, key=lambda f: f["event_date"])["id"], "issue")
+    fs = [f for f in all_facts.values() if local_date(f["event_date"]) and local_date(f["event_date"]) <= today()]
     fs.sort(key=lambda f: (f["id"] not in flagged, -(f["importance"] or 0)))
     picked = sorted(fs[:limit], key=lambda f: f["event_date"])
     m = matter(matter_id)
@@ -361,20 +383,27 @@ def timeline(matter_id, limit=14):
 
 
 def corrections(matter_id):
+    """The few that matter, plus the rest under `other` for a "show all" toggle."""
     by_id = {f["id"]: f for f in facts()}
-    conflicts = [{"id": c["id"], "topic": c["topic"], "explanation": c["explanation"], "severity": c["severity"],
-                  "kpi_affected": c["kpi_affected"],
-                  "facts": [fact_brief(by_id[i]) for i in c["fact_ids"] if i in by_id]} for c in open_conflicts()]
-    issues = []
-    for i in db.q("SELECT * FROM issues"):
-        first = local_date(i["first_flagged"])
-        issues.append({"id": i["id"], "topic": i["topic"], "first_flagged": i["first_flagged"],
-                       "last_mentioned": i["last_mentioned"], "mentions": i["mentions"],
-                       "days_open": (today() - first).days if first else None,
-                       "resolved": i["resolved_by_fact"] is not None,
-                       "facts": [fact_brief(by_id[f]) for f in J(i["fact_ids_json"], []) if f in by_id]})
-    issues.sort(key=lambda i: (i["resolved"], -(i["days_open"] or 0)))
-    return {"conflicts": conflicts, "issues": issues}
+
+    def conflict_card(c):
+        return {"id": c["id"], "topic": c["topic"], "explanation": c["explanation"], "severity": c["severity"],
+                "kpi_affected": c["kpi_affected"],
+                "facts": [fact_brief(by_id[i]) for i in c["fact_ids"] if i in by_id]}
+
+    def issue_card(i):
+        return {"id": i["id"], "topic": i["topic"], "first_flagged": i["first_flagged"],
+                "last_mentioned": i["last_mentioned"], "mentions": i["mentions"], "days_open": i["days_open"],
+                "resolved": i["resolved"], "facts": [fact_brief(by_id[f]) for f in i["fact_ids"] if f in by_id]}
+
+    shown_c = headline_conflicts()
+    shown_ids = {c["id"] for c in shown_c}
+    all_i = ranked_issues()
+    return {"conflicts": [conflict_card(c) for c in shown_c],
+            "issues": [issue_card(i) for i in all_i if not i["resolved"]][:SHOWN],
+            "other": {"conflicts": [conflict_card(c) for c in open_conflicts() if c["id"] not in shown_ids],
+                      "issues": [issue_card(i) for i in ([i for i in all_i if not i["resolved"]][SHOWN:] +
+                                                         [i for i in all_i if i["resolved"]])]}}
 
 
 def source(item_id):

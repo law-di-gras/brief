@@ -22,9 +22,13 @@ with itself, and which problems the firm itself has flagged.
 
 Conflicts: two or more facts that cannot all be true, or that give different values for the same thing
 (amounts, dates, who is responsible, whether something is confirmed). Facts that merely add detail, or
-that describe a change over time in order, are not conflicts. For each conflict give the fact ids,
-a short topic, one or two sentences explaining the disagreement using only what the facts say,
-a severity (high when it changes case value, coverage or a deadline), and the KPI it affects.
+that describe a change over time in order, are not conflicts. A conflict is not just two facts on the
+same subject: the facts must actually disagree. For each conflict give fact_ids listing ONLY the two to
+four facts that disagree with each other, never background or supporting facts; a short topic; one or
+two sentences explaining the disagreement using only what the facts say; the KPI it affects; and a
+severity. Use high only when someone relying on the wrong version could be hurt (case value,
+coverage, a deadline, who is responsible). Use medium for real disagreements that matter less and
+low for small inconsistencies. Most files have only a few high-severity conflicts.
 
 Open issues: problems, gaps, mistakes or unanswered questions that the firm flagged in its own notes,
 tasks or emails. Group facts that mention the same issue. If a later fact shows the issue was resolved,
