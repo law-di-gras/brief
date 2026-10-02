@@ -80,4 +80,16 @@ def callback(code: str | None = None, state: str | None = None, error: str | Non
         "code": code,
         "redirect_uri": _cfg("CLIO_REDIRECT_URI"),
     }))
-    return HTMLResponse("<p>Clio connected (read-only). You can close this tab.</p>")
+    # The OAuth login is the one moment the user's identity is proven, so the firm session starts here.
+    try:
+        from backend.product import sessions
+        me = httpx.get(f"{clio_base()}/api/v4/users/who_am_i.json", params={"fields": "id,name"},
+                       headers={"Authorization": f"Bearer {access_token()}"}, timeout=30)
+        me.raise_for_status()
+        u = me.json()["data"]
+        raw, _ = sessions.create("firm", sessions.FIRM_TTL, user_id=f"user:{u['id']}", user_name=u.get("name"))
+        resp = RedirectResponse("/")
+        sessions.set_cookie(resp, sessions.FIRM_COOKIE, raw, sessions.FIRM_TTL)
+        return resp
+    except Exception:
+        return HTMLResponse("<p>Clio connected (read-only), but the sign-in step failed. Reload and try again.</p>")

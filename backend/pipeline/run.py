@@ -30,7 +30,7 @@ def ingest_replies(conn, matter_id) -> list[str]:
     """Provider replies (our DB, written by product/replies.py) become items with source='portal'."""
     roster = {r["id"]: r for r in db.get_meta(conn, matter_id, "roster", [])}
     rows = conn.execute(
-        "SELECT r.* FROM provider_replies r JOIN shares s ON s.token = r.token WHERE s.matter_id=?",
+        "SELECT r.*, s.snapshot_json FROM provider_replies r JOIN shares s ON s.token = r.token WHERE s.matter_id=?",
         (str(matter_id),)).fetchall()
     changed = []
     for r in rows:
@@ -39,7 +39,10 @@ def ingest_replies(conn, matter_id) -> list[str]:
         received = (r["created_at"] or "")[:10]
         lines = [f"Reply from {who} through the provider share page, received {received}."]
         if r["request_ref"]:
-            lines.append(f"In answer to request: {r['request_ref']}")
+            # The ref is an opaque hash; the approved snapshot has what the firm actually asked for.
+            asked = {q.get("ref"): q.get("what") for q in
+                     ((db.J(r["snapshot_json"], {}) or {}).get("sections", {}).get("requests") or [])}
+            lines.append(f"In answer to the firm's request for: {asked.get(r['request_ref']) or r['request_ref']}")
         if r["field"] or r["value"]:
             lines.append(f"{r['field'] or 'Answer'}: {r['value'] or ''}")
         if r["note"]:
