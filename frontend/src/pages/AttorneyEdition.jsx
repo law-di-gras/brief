@@ -85,6 +85,23 @@ function ConflictCard({ c, onCite }) {
   );
 }
 
+// A collapsed section with its count in the summary, so what is hidden is still visible at a glance.
+function Section({ title, count, note, red, children }) {
+  return (
+    <details className="group border-b border-rule">
+      <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3 py-3 hover:bg-amber-50">
+        <span className="flex items-baseline gap-2">
+          <span className="text-stone-400 transition-transform group-open:rotate-90">▸</span>
+          <span className="font-medium">{title}</span>
+          {count != null && <span className={`text-sm ${red ? "font-semibold text-flag" : "text-stone-500"}`}>({count})</span>}
+        </span>
+        {note && <span className={`text-xs ${red ? "text-flag" : "text-stone-500"}`}>{note}</span>}
+      </summary>
+      <div className="pb-4">{children}</div>
+    </details>
+  );
+}
+
 function Kpi({ k, onCite }) {
   const big = k.amount != null ? fmtMoney(k.amount) : null;
   return (
@@ -126,9 +143,20 @@ export default function AttorneyEdition({ matterId }) {
   if (!d) return <p className="p-10 text-stone-500">Loading…</p>;
   const m = d.masthead;
   const run = d.runs[0];
+  const kpis = d.kpis.filter((k) => k.slot !== "firm_spend");
+  const spend = d.kpis.find((k) => k.slot === "firm_spend");
+  const nConflicts = d.corrections.conflicts.length;
+  const nIssues = d.corrections.issues.length;
+  const nOther = d.corrections.other.conflicts.length + d.corrections.other.issues.length;
+  const overdue = d.coming_up.filter((c) => c.overdue).length;
+  const owed = d.still_waiting.reduce((n, w) => n + w.owes.length, 0);
+  const newReplies = (d.replies || []).filter((r) => r.status === "new").length;
+  const shared = (d.providers || []).filter((p) => p.share).length;
+  const lc = d.last_client_contact;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 pb-16">
+    <div className="mx-auto max-w-4xl px-6 pb-16">
+      {/* ---------- first view: who, what changed, the story, the blocker, the numbers ---------- */}
       <header className="flex flex-wrap items-end justify-between gap-4 border-b-4 border-double border-ink py-5">
         <div className="flex items-center gap-4">
           {m.photo_url && <img src={m.photo_url} alt={m.client} className="h-16 w-16 shrink-0 border border-rule object-cover" />}
@@ -154,7 +182,7 @@ export default function AttorneyEdition({ matterId }) {
       {m.changes.length > 0 && (
         <div className="border-b border-rule py-2 text-sm">
           <span className="kicker mr-2">New</span>
-          {m.changes.slice(0, 5).map((c) => (
+          {m.changes.slice(0, 4).map((c) => (
             <span key={c.item_id} className="cite mr-4" onClick={() => setCite({ text: c.title, source_ids: [c.item_id] })}>
               {fmtShort(c.date)} {c.title}
             </span>
@@ -162,128 +190,129 @@ export default function AttorneyEdition({ matterId }) {
         </div>
       )}
 
-      <section className="mt-4">
-        <Timeline data={d.timeline} onCite={setCite} />
-      </section>
+      <article className="mt-6">
+        {d.headline ? (
+          <h2 className="font-serif text-3xl font-bold leading-tight"><Cited s={d.headline} onCite={setCite} /></h2>
+        ) : (
+          <h2 className="font-serif text-2xl text-stone-500">No headline yet. Run the pipeline.</h2>
+        )}
+        <p className="mt-3 font-serif text-lg leading-relaxed">
+          {d.lead.map((s, i) => <span key={i}><Cited s={s} onCite={setCite} /> </span>)}
+        </p>
+        <p className="mt-1 text-xs text-stone-400">Click any sentence to see where it came from.</p>
+      </article>
 
-      <div className="mt-6 grid gap-8 lg:grid-cols-3">
-        <main className="space-y-6 lg:col-span-2">
-          <article>
-            {d.headline ? (
-              <h2 className="font-serif text-3xl font-bold leading-tight"><Cited s={d.headline} onCite={setCite} /></h2>
-            ) : (
-              <h2 className="font-serif text-2xl text-stone-500">No headline yet. Run the pipeline.</h2>
-            )}
-            <p className="mt-3 font-serif text-lg leading-relaxed">
-              {d.lead.map((s, i) => <span key={i}><Cited s={s} onCite={setCite} /> </span>)}
-            </p>
-            <p className="mt-1 text-xs text-stone-400">Click any sentence to see where it came from.</p>
-          </article>
+      <div className="mt-6"><BlockerCard blocker={d.blocker} onCite={setCite} /></div>
 
-          <BlockerCard blocker={d.blocker} onCite={setCite} />
-
-          <section>
-            <div className="kicker border-b border-rule pb-1">Corrections: where the file disagrees with itself</div>
-            {d.corrections.conflicts.map((c) => (
-              c.sides?.length > 1
-                ? <ConflictCard key={`c${c.id}`} c={c} onCite={setCite} />
-                : <Correction key={`c${c.id}`} badge="Conflict" red title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
-            ))}
-            {d.corrections.issues.map((i) => (
-              <Correction key={`i${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
-                sub={`Open ${i.days_open} days · flagged ${fmtDate(i.first_flagged)}${i.mentions > 1 ? ` · mentioned ${i.mentions} times` : ""}`}
-                facts={i.facts} onCite={setCite} />
-            ))}
-            {!d.corrections.conflicts.length && !d.corrections.issues.length && <p className="py-3 text-sm text-stone-500">Nothing flagged.</p>}
-            {(d.corrections.other.conflicts.length + d.corrections.other.issues.length) > 0 && (
-              <div className="py-2">
-                <Toggle open={allOther} onClick={() => setAllOther(!allOther)}>
-                  Show {d.corrections.other.conflicts.length} other discrepancies and {d.corrections.other.issues.length} other open issues
-                </Toggle>
-                {allOther && (
-                  <div className="mt-1">
-                    {d.corrections.other.conflicts.map((c) => (
-                      c.sides?.length > 1
-                        ? <ConflictCard key={`oc${c.id}`} c={c} onCite={setCite} />
-                        : <Correction key={`oc${c.id}`} badge="Discrepancy" title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
-                    ))}
-                    {d.corrections.other.issues.map((i) => (
-                      <Correction key={`oi${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
-                        sub={`Open ${i.days_open} days`} facts={i.facts} onCite={setCite} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </section>
-        </main>
-
-        <aside className="space-y-6">
-          <div className="grid grid-cols-2 gap-px border border-rule bg-rule">
-            {d.kpis.map((k) => <Kpi key={k.slot} k={k} onCite={setCite} />)}
-          </div>
-
-          <div className="card">
-            <div className="kicker">Still waiting</div>
-            <ul className="mt-2 divide-y divide-rule">
-              {d.still_waiting.map((w) => (
-                <li key={w.contact_id} className="py-2">
-                  <div className="flex justify-between gap-2">
-                    <span className="font-medium">{w.name}</span>
-                    <span className="shrink-0 text-xs text-stone-500">{w.days_silent != null && `${w.days_silent} days silent`}</span>
-                  </div>
-                  {w.owes.map((o) => (
-                    <div key={o.ref} className="mt-1 text-sm">
-                      <span className="mr-1.5 inline-block border border-stone-400 px-1 text-[10px] font-semibold uppercase tracking-wide text-stone-600">{o.kind_label}</span>
-                      {o.what !== o.kind_label && <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>{o.what}</span>}
-                      {o.what === o.kind_label && <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>see source</span>}
-                      <span className="text-xs text-stone-500">{o.times_asked > 0 && ` · asked ${times(o.times_asked)}`}{o.first_asked && ` · since ${fmtShort(o.first_asked)}`}</span>
-                    </div>
-                  ))}
-                </li>
-              ))}
-              {!d.still_waiting.length && <li className="py-2 text-sm text-stone-500">Nobody owes the firm anything.</li>}
-            </ul>
-          </div>
-
-          <div className="card">
-            <div className="kicker">Coming up, next 21 days</div>
-            <ul className="mt-2 space-y-1.5">
-              {(allComing ? d.coming_up : d.coming_up.filter((c, i) => c.overdue || i < d.coming_up.filter((x) => x.overdue).length + COMING_UP_SHOWN)).map((c) => (
-                <li key={c.item_id} className="flex gap-2 text-sm">
-                  <span className={`w-16 shrink-0 ${c.overdue ? "font-semibold text-flag" : "text-stone-500"}`}>{c.overdue ? "Overdue" : fmtShort(c.date)}</span>
-                  <span className="cite" onClick={() => setCite({ text: c.title, source_ids: [c.item_id] })}>
-                    {c.title}{c.overdue && <span className="text-stone-500"> (due {fmtShort(c.date)})</span>}
-                  </span>
-                </li>
-              ))}
-              {!d.coming_up.length && <li className="text-sm text-stone-500">Nothing scheduled.</li>}
-            </ul>
-            {d.coming_up.filter((c) => !c.overdue).length > COMING_UP_SHOWN && (
-              <Toggle open={allComing} onClick={() => setAllComing(!allComing)}>Show all {d.coming_up.length}</Toggle>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="kicker">Last client contact</div>
-            {d.last_client_contact ? (
-              <p className="mt-1 text-sm">
-                <b>{d.last_client_contact.days_ago} days ago</b> · {fmtDate(d.last_client_contact.date)}<br />
-                <Cited s={{ ...d.last_client_contact, text: d.last_client_contact.title }} onCite={setCite} />
-              </p>
-            ) : <p className="mt-1 text-sm text-stone-500">None on file.</p>}
-          </div>
-
-          <ProviderPanel providers={d.providers} replies={d.replies} onCite={setCite} onAck={act(() => post(`${base}/replies/ack`))} />
-        </aside>
+      <div className="mt-6 grid grid-cols-2 gap-px border border-rule bg-rule md:grid-cols-4">
+        {kpis.map((k) => <Kpi key={k.slot} k={k} onCite={setCite} />)}
       </div>
 
-      <footer className="mt-10 border-t border-rule pt-3 text-xs text-stone-400">
-        {run
-          ? `Last run ${fmtDate(run.started_at)}: ${run.items_changed} items changed, ${run.facts_kept} facts kept, ${run.facts_dropped} dropped, ${run.input_tokens} in / ${run.output_tokens} out tokens.`
-          : "No pipeline runs recorded."}
-        {!d.pipeline_live && " Pipeline not connected: showing fixture data."} Brief reads Clio and never writes to it.
-      </footer>
+      <p className="mt-3 text-sm text-stone-600">
+        {lc ? (
+          <>Last talked to the client <b>{lc.days_ago} days ago</b>:{" "}
+            <Cited s={{ ...lc, text: lc.title }} onCite={setCite} /></>
+        ) : "No client contact on file."}
+        {spend && <> · Firm has spent <span className="cite" onClick={() => spend.source_ids.length && setCite({ text: `Firm spend: ${spend.field_name}`, source_ids: spend.source_ids.slice(0, 5) })}><b>{fmtMoney(spend.amount)}</b></span> ({spend.field_name})</>}
+      </p>
+
+      {/* ---------- everything else: one click away, with a count so nothing hides ---------- */}
+      <div className="mt-8 border-t border-ink">
+        <Section title="Where the file disagrees with itself" count={nConflicts + nIssues}
+          note={`${nConflicts} ${nConflicts === 1 ? "conflict" : "conflicts"} · ${nIssues} open ${nIssues === 1 ? "issue" : "issues"}`} red={nConflicts > 0}>
+          {d.corrections.conflicts.map((c) => (
+            c.sides?.length > 1
+              ? <ConflictCard key={`c${c.id}`} c={c} onCite={setCite} />
+              : <Correction key={`c${c.id}`} badge="Conflict" red title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
+          ))}
+          {d.corrections.issues.map((i) => (
+            <Correction key={`i${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
+              sub={`Open ${i.days_open} days · flagged ${fmtDate(i.first_flagged)}${i.mentions > 1 ? ` · mentioned ${i.mentions} times` : ""}`}
+              facts={i.facts} onCite={setCite} />
+          ))}
+          {!nConflicts && !nIssues && <p className="py-3 text-sm text-stone-500">Nothing flagged.</p>}
+          {nOther > 0 && (
+            <div className="py-2">
+              <Toggle open={allOther} onClick={() => setAllOther(!allOther)}>
+                Show {d.corrections.other.conflicts.length} other discrepancies and {d.corrections.other.issues.length} other open issues
+              </Toggle>
+              {allOther && (
+                <div className="mt-1">
+                  {d.corrections.other.conflicts.map((c) => (
+                    c.sides?.length > 1
+                      ? <ConflictCard key={`oc${c.id}`} c={c} onCite={setCite} />
+                      : <Correction key={`oc${c.id}`} badge="Discrepancy" title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
+                  ))}
+                  {d.corrections.other.issues.map((i) => (
+                    <Correction key={`oi${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
+                      sub={`Open ${i.days_open} days`} facts={i.facts} onCite={setCite} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Section>
+
+        <Section title="Still waiting on others" count={owed}
+          note={`${owed} ${owed === 1 ? "request" : "requests"} with ${d.still_waiting.length} ${d.still_waiting.length === 1 ? "party" : "parties"}`}>
+          <ul className="divide-y divide-rule">
+            {d.still_waiting.map((w) => (
+              <li key={w.contact_id} className="py-2">
+                <div className="flex justify-between gap-2">
+                  <span className="font-medium">{w.name}</span>
+                  <span className="shrink-0 text-xs text-stone-500">{w.days_silent != null && `${w.days_silent} days silent`}</span>
+                </div>
+                {w.owes.map((o) => (
+                  <div key={o.ref} className="mt-1 text-sm">
+                    <span className="mr-1.5 inline-block border border-stone-400 px-1 text-[10px] font-semibold uppercase tracking-wide text-stone-600">{o.kind_label}</span>
+                    <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>{o.what !== o.kind_label ? o.what : "see source"}</span>
+                    <span className="text-xs text-stone-500">{o.times_asked > 0 && ` · asked ${times(o.times_asked)}`}{o.first_asked && ` · since ${fmtShort(o.first_asked)}`}</span>
+                  </div>
+                ))}
+              </li>
+            ))}
+            {!d.still_waiting.length && <li className="py-2 text-sm text-stone-500">Nobody owes the firm anything.</li>}
+          </ul>
+        </Section>
+
+        <Section title="Coming up, next 21 days" count={d.coming_up.length}
+          note={overdue ? `${overdue} overdue` : `${d.coming_up.length} scheduled`} red={overdue > 0}>
+          <ul className="space-y-1.5">
+            {(allComing ? d.coming_up : d.coming_up.filter((c, i) => c.overdue || i < overdue + COMING_UP_SHOWN)).map((c) => (
+              <li key={c.item_id} className="flex gap-2 text-sm">
+                <span className={`w-16 shrink-0 ${c.overdue ? "font-semibold text-flag" : "text-stone-500"}`}>{c.overdue ? "Overdue" : fmtShort(c.date)}</span>
+                <span className="cite" onClick={() => setCite({ text: c.title, source_ids: [c.item_id] })}>
+                  {c.title}{c.overdue && <span className="text-stone-500"> (due {fmtShort(c.date)})</span>}
+                </span>
+              </li>
+            ))}
+            {!d.coming_up.length && <li className="text-sm text-stone-500">Nothing scheduled.</li>}
+          </ul>
+          {d.coming_up.length - overdue > COMING_UP_SHOWN && (
+            <Toggle open={allComing} onClick={() => setAllComing(!allComing)}>Show all {d.coming_up.length}</Toggle>
+          )}
+        </Section>
+
+        <Section title="Timeline" count={d.timeline?.events?.length || 0} note="key dated events, incident to today">
+          <Timeline data={d.timeline} onCite={setCite} />
+        </Section>
+
+        <Section title="Providers and replies" count={(d.providers || []).length}
+          note={`${shared} shared${newReplies ? ` · ${newReplies} new ${newReplies === 1 ? "reply" : "replies"}` : ""}`} red={newReplies > 0}>
+          <ProviderPanel providers={d.providers} replies={d.replies} onCite={setCite} onAck={act(() => post(`${base}/replies/ack`))} />
+        </Section>
+
+        <Section title="How this page was made" note={run ? `last run ${fmtDate(run.started_at)}` : "no runs yet"}>
+          <p className="text-sm text-stone-600">
+            {run
+              ? `Last run ${fmtDate(run.started_at)}: ${run.items_changed} items changed, ${run.facts_kept} facts kept, ${run.facts_dropped} dropped by the source checks, ${run.input_tokens} in / ${run.output_tokens} out tokens.`
+              : "No pipeline runs recorded."}
+            {run?.status === "partial" && ` ${run.error}`}
+            {!d.pipeline_live && " Pipeline not connected: showing fixture data."}
+          </p>
+          <p className="mt-1 text-sm text-stone-600">Brief reads Clio and never writes to it. Every sentence opens the item it came from.</p>
+        </Section>
+      </div>
 
       <SourceViewer cite={cite} onClose={() => setCite(null)} />
     </div>
