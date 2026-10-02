@@ -18,7 +18,8 @@ Every sentence on screen links back to the Clio note, email, task or document pa
 3. **`backend/pipeline/graph.py`**: the root blocker is computed in plain Python from extracted dependencies, not chosen by the model.
 4. **`backend/product/provider.py`**: the provider page renders only from the attorney-approved share snapshot. It never queries internal facts.
 5. **`backend/product/replies.py`**: provider answers are stored in our own database and re-enter the pipeline as items, so a reply can clear a blocker on the attorney's page. Nothing is written to Clio.
-6. **Nothing is case-specific.** No prompt or code mentions Sapini, a person, a provider, or a dollar amount. Change `MATTER_ID` and it builds a new front page.
+6. **Nothing is case-specific.** No prompt or backend or frontend code mentions Sapini, a person, a provider, or a dollar amount (the only Sapini data is the offline test fixtures in `dev/`). Change `MATTER_ID` and it builds a new front page.
+7. **`backend/pipeline/analyze.py`, `independent()`**: a conflict is kept only if its statements come from independent origins (see below).
 
 ---
 
@@ -30,7 +31,15 @@ Every fact the model extracts must pass all three checks in `validate.py`, or it
 2. **Verbatim evidence.** Every fact carries an `evidence` quote that must appear word for word in a cited source. The source viewer highlights it.
 3. **No number without a source.** Every number, dollar amount and date in a fact or a generated sentence must appear in the cited source text, after normalization (`$22,180.00` matches `22180`, `5 October 2011` matches `2011-10-05`).
 
-Each run records how many facts were kept and dropped in the `runs` table, shown in the app's debug footer.
+Each run records how many facts were kept and dropped, with the reason for each drop, in the `runs` table, shown in the app's debug footer. On the first live run over Sapini the model proposed 399 facts and 389 passed. The 10 dropped were 8 unsourced numbers, 1 non-verbatim quote and 1 malformed fact. Dependencies go through rules 1 and 2.
+
+### Two more checks on conflicts
+
+A "conflict" is a place where the file disagrees with itself. The model proposes them, then code keeps only the ones that hold up:
+
+- **At least two different items.** A fact cannot conflict with itself.
+- **Independent origins.** All pages of one PDF count as one origin. Two statements conflict only if they come from different kinds of source (matter record, note, email, task, document of a different type, provider reply) or from emails with different senders. Two notes, two tasks, two bills or two pages of one PDF are not a conflict. Dropped candidates are logged as `conflict_not_independent` and `conflict_single_source`.
+- **The front page shows only high-severity conflicts and the five most important open issues.** The rest are one click away.
 
 ---
 
@@ -262,21 +271,29 @@ frontend/
 ```bash
 # 1. Environment
 cp .env.example .env
-# CLIO_CLIENT_ID, CLIO_CLIENT_SECRET, CLIO_REDIRECT_URI=http://localhost:8000/auth/clio/callback
-# ANTHROPIC_API_KEY, MATTER_ID, DB_PATH=brief.db
+# CLIO_CLIENT_ID, CLIO_CLIENT_SECRET, MATTER_ID (the number after /matters/ in Clio's URL)
+# CLIO_REDIRECT_URI=http://127.0.0.1:8000/auth/clio/callback   (Clio rejects "localhost"; register this exact URI)
+# ANTHROPIC_API_KEY, and ANTHROPIC_WORKSPACE_ID if the key is not scoped to a workspace
+# DB_PATH=brief.db (a separate file from Clio; one matter per file)
 
 # 2. Backend
 pip install -r requirements.txt
 uvicorn backend.main:app --reload
 
-# 3. Connect Clio (read-only scopes): open http://localhost:8000/auth/clio/login
+# 3. Connect Clio (read-only scopes) and sign in: open http://127.0.0.1:8000/auth/clio/login
 
 # 4. Run the pipeline for a matter
 python -m backend.pipeline.run --matter-id $MATTER_ID
 
-# 5. Frontend
-cd frontend && npm install && npm run dev
+# 5. Frontend: build it and the backend serves it at http://127.0.0.1:8000
+cd frontend && npm install && npm run build
+# (or `npm run dev` for hot reload on :5173, which proxies to :8000)
+
+# Tests (no network or API key needed; the model is scripted)
+python -m pytest -q
 ```
+
+Offline, with no Clio account: set `CLIO_SOURCE=fixture` and `SEED_PATH=<path to sapini-clio-data.json>`. Sync then reads the seed file through the same code path. `python -m backend.pipeline.run --matter-id 1 --fixture-facts` loads a small hand-written facts file (`dev/fixtures/facts.json`) instead of calling the model. `--reextract` sends every stored item through the model again, e.g. after a failed run.
 
 ---
 
@@ -291,10 +308,12 @@ Every API call logs its token usage to the `runs` table.
 
 | Run | Input tokens | Output tokens | Cost |
 |---|---|---|---|
-| First full digest of Sapini | TODO: measured | TODO: measured | TODO |
-| Incremental update (one new note or reply) | TODO: measured | TODO: measured | TODO |
+| First full digest of Sapini (525 items, 389 facts kept) | 493,928 | 80,819 | about $1.80 |
+| Provider reply (1 new item, then analysis re-run) | about 46,000 | about 8,000 | about $0.17 |
 
-The full digest runs once per case. After that, only new or changed items are sent to the model, whether they come from Clio or from a provider reply, so cost per update stays small as the file and the team grow.
+Measured on the live Sapini matter and read from the `runs` table. Cost is at Sonnet 5.5 list prices ($2 in / $10 out per million tokens); input counts cached tokens at full price, so the real figure is a little lower. The small Haiku classification calls (document types, relationship roles) are not included and are a fraction of a cent.
+
+The full digest runs once per case. After that, only new or changed items are re-extracted, whether they come from Clio or from a provider reply. Extracting a new item is cheap; most of the cost of an update is re-running the conflict, issue and blocker analysis over all facts. A cheaper update would skip that step when no new fact is kept. Opening the page again costs nothing while the facts and the reader's last-visit date are unchanged: the headline and lead are cached on those.
 
 ---
 
@@ -303,4 +322,10 @@ The full digest runs once per case. After that, only new or changed items are se
 - OCR of the scanned medical records bundles (they appear as placeholder items only).
 - Email or SMS notifications to providers. Providers see "updates since your last view" when they open their link.
 - Per-fact sharing controls. Sharing is controlled per section.
-- TODO: list anything else unfinished before submitting.
+- **Provider page content.** The model labels each fact `shareable` or `internal`, and a provider page can only show `shareable` facts, but that label is model-assigned and can be wrong. The request list on a provider page is also longer and wordier than it should be, and it can include a note that is really the firm's own internal reminder. The attorney's review screen is the safeguard; do not share a page without reading it.
+- **Authors of notes.** Clio does not give us a note's author in the fields we read, so two notes by different people count as one origin when checking for conflicts. Emails are checked by sender.
+- **Model variation.** Conflicts and open issues come from a model and vary somewhat between runs. The headline is cached per state of the file, but a rerun can pick different conflicts.
+- **Client photo** is the largest image in the photo-ID PDF, so it is the whole ID card, not a cropped face.
+- **Headline and lead** fall back to the highest-importance cited facts, without the model, when no API key is set or the model's sentences fail the number check.
+- **Single matter.** One database file holds one matter. Running several matters means one database per matter.
+- **Keyword fallbacks.** When no API key is available, mapping of custom-field names to KPI slots and roles falls back to keyword rules. With a key, Haiku does it.

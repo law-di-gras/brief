@@ -87,7 +87,7 @@ class FixtureClio:
         if re.fullmatch(r"/matters/\d+\.json", path):
             m = self._resolve(self.seed["matter"]["body"])
             m["id"] = self.matter_id
-            m["display_number"] = f"{self.matter_id:05d}-Sapini"
+            m["display_number"] = f"{self.matter_id:05d}"
             cfv = []
             for i, v in enumerate(self.seed["matter"]["body"].get("custom_field_values", [])):
                 name = PLACEHOLDER.fullmatch(v["custom_field"]["id"]).group(2)
