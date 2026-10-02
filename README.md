@@ -1,6 +1,6 @@
 # Brief: the case reads itself
 
-> Team: **[team name]** · Swans Applied AI Hackathon, Law-Di-Gras, San Diego, October 2, 2026
+> Team: **Lawgic** · Swans Applied AI Hackathon, Law-Di-Gras, San Diego, October 2, 2026
 
 Brief turns a live Clio Manage matter into two connected views:
 
