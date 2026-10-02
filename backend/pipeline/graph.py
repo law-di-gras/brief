@@ -50,7 +50,7 @@ def slug(label: str) -> str:
 def label_nodes(conn, matter_id) -> None:
     """Assign node_blocked / node_waiting on every dependency and refresh blocker_nodes."""
     matter_id = str(matter_id)
-    deps = conn.execute("SELECT * FROM dependencies WHERE matter_id=?", (matter_id,)).fetchall()
+    deps = conn.execute("SELECT * FROM dependencies").fetchall()
     conn.execute("DELETE FROM blocker_nodes WHERE matter_id=?", (matter_id,))
     if not deps:
         conn.commit()
@@ -113,7 +113,7 @@ def build_graph(conn, matter_id, today: date | None = None) -> dict:
     nodes = {r["node_id"]: dict(r) for r in conn.execute(
         "SELECT * FROM blocker_nodes WHERE matter_id=?", (matter_id,))}
     deps = [dict(r) for r in conn.execute(
-        "SELECT * FROM dependencies WHERE matter_id=? AND node_blocked IS NOT NULL", (matter_id,))]
+        "SELECT * FROM dependencies WHERE node_blocked IS NOT NULL")]
     items = item_map(conn, matter_id)
     if not deps:
         return {"root": None, "nodes": [], "edges": []}

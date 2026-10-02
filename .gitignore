@@ -2,8 +2,10 @@
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 data/
 __pycache__/
 .pytest_cache/
 .DS_Store
 node_modules/
+frontend/dist/

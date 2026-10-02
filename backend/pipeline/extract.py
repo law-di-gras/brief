@@ -119,18 +119,18 @@ def delete_facts_for_items(conn, item_ids) -> None:
 
 def insert_facts(conn, matter_id, facts, run_id) -> None:
     conn.executemany(
-        """INSERT INTO facts(matter_id, text, category, event_date, entities_json, source_ids_json, evidence,
-                             audience, importance, is_open_issue, run_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        [(str(matter_id), f["text"], f["category"], f.get("event_date"), json.dumps(f.get("entities", [])),
+        """INSERT INTO facts(text, category, event_date, entities_json, source_ids_json, evidence,
+                             audience, importance, is_open_issue, run_id) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        [(f["text"], f["category"], f.get("event_date"), json.dumps(f.get("entities", [])),
           json.dumps(f["source_ids"]), f["evidence"], f.get("audience", "internal"), f.get("importance", 3),
           int(bool(f.get("is_open_issue"))), run_id) for f in facts])
 
 
 def insert_dependencies(conn, matter_id, deps, run_id) -> None:
     conn.executemany(
-        """INSERT INTO dependencies(matter_id, blocked, waiting_on, holder, source_ids_json, evidence, run_id)
-           VALUES (?,?,?,?,?,?,?)""",
-        [(str(matter_id), d["blocked"], d["waiting_on"], d["holder"], json.dumps(d["source_ids"]),
+        """INSERT INTO dependencies(blocked, waiting_on, holder, source_ids_json, evidence, run_id)
+           VALUES (?,?,?,?,?,?)""",
+        [(d["blocked"], d["waiting_on"], d["holder"], json.dumps(d["source_ids"]),
           d["evidence"], run_id) for d in deps])
 
 
@@ -141,7 +141,8 @@ def extract_items(conn, matter_id, item_ids: list[str], run_id: int | None) -> t
     if not item_ids:
         return 0, Counter()
     rows = conn.execute(
-        "SELECT * FROM items WHERE item_id IN (SELECT value FROM json_each(?)) ORDER BY item_date, item_id",
+        "SELECT * FROM items WHERE item_id IN (SELECT value FROM json_each(?)) "
+        "AND clio_type != 'relationship' ORDER BY item_date, item_id",
         (json.dumps(item_ids),)).fetchall()
     roster = db.get_meta(conn, matter_id, "roster", [])
     roster_ids = {r["id"] for r in roster}

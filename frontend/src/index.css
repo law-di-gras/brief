@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .kicker { @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-stone-500; }
+  .card { @apply border border-rule bg-white p-4; }
+  .btn { @apply inline-flex items-center border border-ink bg-ink px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-40; }
+  .btn-ghost { @apply inline-flex items-center border border-rule bg-white px-3 py-1.5 text-sm font-medium hover:border-ink disabled:opacity-40; }
+  .cite { @apply cursor-pointer decoration-stone-400 decoration-dotted underline-offset-4 hover:bg-amber-100 hover:underline; }
+  .badge-red { @apply inline-block border border-flag px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-flag; }
+  .input { @apply w-full border border-rule bg-white px-2 py-1.5 text-sm focus:border-ink focus:outline-none; }
+}

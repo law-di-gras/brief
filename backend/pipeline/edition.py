@@ -47,12 +47,11 @@ SCHEMA = {
 
 def facts_version(conn, matter_id) -> str:
     row = conn.execute(
-        "SELECT COUNT(*) n, COALESCE(MAX(id),0) mx, COALESCE(SUM(id),0) s FROM facts WHERE matter_id=?",
-        (str(matter_id),)).fetchone()
+        "SELECT COUNT(*) n, COALESCE(MAX(id),0) mx, COALESCE(SUM(id),0) s FROM facts").fetchone()
     extra = conn.execute(
-        "SELECT (SELECT group_concat(fingerprint||status) FROM conflicts WHERE matter_id=?) c, "
+        "SELECT (SELECT group_concat(fingerprint||status) FROM conflicts) c, "
         "(SELECT group_concat(node_id||COALESCE(resolved_by_fact,'')) FROM blocker_nodes WHERE matter_id=?) b",
-        (str(matter_id), str(matter_id))).fetchone()
+        (str(matter_id),)).fetchone()
     return hashlib.sha256(f"{row['n']}|{row['mx']}|{row['s']}|{extra['c']}|{extra['b']}".encode()).hexdigest()[:16]
 
 
@@ -149,6 +148,44 @@ def build_timeline(facts, items, conflicts, issues, today: date) -> list[dict]:
     return out
 
 
+def _with_evidence(sentence: dict, facts: dict) -> dict:
+    """The product UI highlights `evidence` when a sentence is clicked."""
+    ev = [facts[i]["evidence"] for i in sentence.get("fact_ids", []) if i in facts]
+    return {**sentence, "evidence": ev[0] if ev else None}
+
+
+def product_blocker(conn, matter_id, graph: dict, facts: dict, items: dict) -> dict | None:
+    """The blocker in the shape product/bridge.py and BlockerCard.jsx expect.
+
+    When no unresolved root remains but a provider reply cleared a node, return that node as
+    resolved so the page can show "Root blocker cleared".
+    """
+    roster = {r["id"]: r.get("name") for r in db.get_meta(conn, matter_id, "roster", [])}
+    root = graph.get("root")
+    if root:
+        holders = [{"holder": h, "name": roster.get(h) or h, "quote": q["evidence"],
+                    "source_ids": q["source_ids"], "date": q["date"]}
+                   for h, quotes in root["quotes"].items() for q in quotes]
+        pending_reply = any(
+            i["source"] == "portal" and not conn.execute(
+                "SELECT 1 FROM facts, json_each(facts.source_ids_json) s WHERE s.value=? LIMIT 1", (i["item_id"],)).fetchone()
+            for i in items.values())
+        return {"node": root["node_id"], "label": root["label"], "resolved": False, "disputed": root["disputed"],
+                "holders": holders, "dependents": root["dependents"], "requests_sent": root["request_count"],
+                "reply_received": pending_reply}
+    cleared = []
+    for n in graph["nodes"]:
+        fid = n["resolved_by_fact"]
+        if fid in facts and any(items.get(s, {}).get("source") == "portal" for s in facts[fid]["source_ids"]):
+            cleared.append((said_date(facts[fid], items) or "", n))
+    if cleared:
+        n = max(cleared, key=lambda c: c[0])[1]
+        return {"node": n["node_id"], "label": n["label"], "resolved": True, "disputed": False, "holders": [],
+                "dependents": [], "requests_sent": 0, "reply_received": True,
+                "resolved_by_fact": n["resolved_by_fact"]}
+    return None
+
+
 def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
     own = conn is None
     conn = conn or db.connect()
@@ -159,8 +196,8 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
         items = item_map(conn, matter_id)
 
         conflicts = []
-        for r in conn.execute("SELECT * FROM conflicts WHERE matter_id=? ORDER BY "
-                              "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id", (matter_id,)):
+        for r in conn.execute("SELECT * FROM conflicts ORDER BY "
+                              "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id"):
             c = dict(r)
             c["fact_ids"] = json.loads(c.pop("fact_ids_json"))
             c["facts"] = [facts[i] for i in c["fact_ids"] if i in facts]
@@ -169,7 +206,7 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
                 conflicts.append(c)
 
         issues = []
-        for r in conn.execute("SELECT * FROM issues WHERE matter_id=? ORDER BY first_flagged", (matter_id,)):
+        for r in conn.execute("SELECT * FROM issues ORDER BY first_flagged"):
             it = dict(r)
             it["fact_ids"] = json.loads(it.pop("fact_ids_json"))
             it["facts"] = [facts[i] for i in it["fact_ids"] if i in facts]
@@ -188,8 +225,9 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
             for r in conn.execute(
                     "SELECT i.item_id, i.title, i.item_date, i.source, i.clio_type, i.clio_id, d.name doc_name "
                     "FROM items i LEFT JOIN documents d ON i.clio_type='document' AND d.doc_id=i.clio_id "
-                    "WHERE i.matter_id=? AND i.item_date>? AND i.item_date<=? ORDER BY i.item_date DESC, i.item_id",
-                    (matter_id, since_d, today.isoformat())):
+                    "WHERE i.item_date>? AND i.item_date<=? AND i.clio_type NOT IN ('matter','relationship') "
+                    "ORDER BY i.item_date DESC, i.item_id",
+                    (since_d, today.isoformat())):
                 if r["clio_type"] == "document":   # one update per document, not per page
                     if r["clio_id"] in seen_docs:
                         continue
@@ -203,10 +241,11 @@ def build_edition(matter_id, since: str | None = None, conn=None) -> dict:
             "generated_at": db.now_iso(),
             "since": since,
             "facts_version": facts_version(conn, matter_id),
-            "headline": headline,
-            "lead": lead,
+            "headline": _with_evidence(headline, facts),
+            "lead": [_with_evidence(s, facts) for s in lead],
             "timeline": build_timeline(facts, items, conflicts, issues, today),
-            "blocker": graph["root"],
+            "blocker": product_blocker(conn, matter_id, graph, facts, items),
+            "blocker_detail": graph["root"],
             "graph": {"nodes": graph["nodes"], "edges": graph["edges"]},
             "conflicts": conflicts,
             "issues": issues,

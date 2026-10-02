@@ -104,10 +104,14 @@ def test_full_run_then_reply_clears_blocker(env):
     assert stats["drop_reasons"]["unsourced_number"] == 1
 
     ed = edition.build_edition("7", since="2026-09-01")
-    root = ed["blocker"]
+    root = ed["blocker_detail"]
     assert root["node_id"] == "surgery_date"
     assert root["disputed"] is True                      # client and clinic each named as holder
     assert set(root["holders"]) == {"contact:10", "contact:20"}
+    b = ed["blocker"]                                    # the shape product/bridge.py and BlockerCard expect
+    assert (b["node"], b["label"], b["resolved"], b["disputed"]) == ("surgery_date", "Surgery date", False, True)
+    assert {h["name"] for h in b["holders"]} == {"John Doe", "Bone Clinic"} and b["holders"][0]["quote"]
+    assert ed["headline"]["evidence"] is None or isinstance(ed["headline"]["evidence"], str)
     assert ed["headline"]["text"] != "Surgery date owed since 1999"   # unsourced year -> fallback
     assert ed["lead"][0]["text"] == "The clinic has had three requests."
     assert ed["updates_since"]["count"] == 1             # the 2026-09-10 note
@@ -125,7 +129,8 @@ def test_full_run_then_reply_clears_blocker(env):
     stats = run.run_pipeline("7")
     assert stats["items_changed"] == 1 and env.reply_seen
     ed2 = edition.build_edition("7", since="2026-09-01")
-    assert ed2["blocker"] is None or ed2["blocker"]["node_id"] != "surgery_date"
+    assert ed2["blocker_detail"] is None or ed2["blocker_detail"]["node_id"] != "surgery_date"
+    assert ed2["blocker"]["resolved"] is True and ed2["blocker"]["node"] == "surgery_date"
     assert any(n["node_id"] == "surgery_date" and n["resolved"] for n in ed2["graph"]["nodes"])
     runs = conn.execute("SELECT COUNT(*) n FROM runs WHERE matter_id='7'").fetchone()["n"]
     assert runs == 3

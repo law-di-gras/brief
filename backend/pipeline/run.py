@@ -46,7 +46,7 @@ def ingest_replies(conn, matter_id) -> list[str]:
             lines.append(f"Note: {r['note']}")
         item = dict(item_id=f"portal:{r['id']}", source="portal", clio_type="provider_reply", clio_id=None,
                     title=f"Reply from {who}", text="\n".join(lines)[:MAX_REPLY_CHARS], item_date=received or None,
-                    people=[cid], raw=None)
+                    people=[{"id": cid, "name": who, "role": "provider"}], raw=None)
         if sync.upsert_item(conn, matter_id, item):
             changed.append(item["item_id"])
     conn.commit()
@@ -64,7 +64,7 @@ def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
             out += [r["id"] for r in roster if n.lower() in (r.get("name") or "").lower()]
         return out
 
-    sent = {r["item_id"]: dict(r) for r in conn.execute("SELECT * FROM items WHERE matter_id=?", (str(matter_id),))}
+    sent = {r["item_id"]: dict(r) for r in conn.execute("SELECT * FROM items")}
     roster_ids = {r["id"] for r in roster}
     for f in data["facts"]:
         f["entities"] = (f.get("entities") or []) + by_name(f.pop("entity_names", []))
@@ -72,8 +72,8 @@ def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
         if "holder_name" in d:
             d["holder"] = (by_name([d.pop("holder_name")]) or ["unknown"])[0]
 
-    conn.execute("DELETE FROM facts WHERE matter_id=?", (str(matter_id),))
-    conn.execute("DELETE FROM dependencies WHERE matter_id=?", (str(matter_id),))
+    conn.execute("DELETE FROM facts")
+    conn.execute("DELETE FROM dependencies")
     keys = [f.pop("key") for f in data["facts"]]
     kept_keys, kept = [], []
     for k, f in zip(keys, data["facts"]):
@@ -86,25 +86,25 @@ def load_fixture_facts(conn, matter_id, path: Path = FIXTURE) -> dict:
     extract.insert_facts(conn, matter_id, kept, None)
     deps, ddrops = validate.validate_dependencies(data["dependencies"], sent, roster_ids)
     extract.insert_dependencies(conn, matter_id, deps, None)
-    ids = [r["id"] for r in conn.execute("SELECT id FROM facts WHERE matter_id=? ORDER BY id", (str(matter_id),))]
+    ids = [r["id"] for r in conn.execute("SELECT id FROM facts ORDER BY id")]
     key_to_id = dict(zip(kept_keys, ids))
 
-    conn.execute("DELETE FROM conflicts WHERE matter_id=?", (str(matter_id),))
+    conn.execute("DELETE FROM conflicts")
     for c in data["conflicts"]:
         fids = [key_to_id[k] for k in c["facts"] if k in key_to_id]
         if len(fids) >= 2:
-            conn.execute("INSERT INTO conflicts(matter_id, fingerprint, fact_ids_json, topic, explanation, severity, "
-                         "kpi_affected) VALUES (?,?,?,?,?,?,?)",
-                         (str(matter_id), analyze.fingerprint(fids), json.dumps(fids), c["topic"],
+            conn.execute("INSERT INTO conflicts(fingerprint, fact_ids_json, topic, explanation, severity, "
+                         "kpi_affected) VALUES (?,?,?,?,?,?)",
+                         (analyze.fingerprint(fids), json.dumps(fids), c["topic"],
                           c.get("explanation"), c.get("severity", "medium"), c.get("kpi_affected")))
-    conn.execute("DELETE FROM issues WHERE matter_id=?", (str(matter_id),))
+    conn.execute("DELETE FROM issues")
     facts = analyze.load_facts(conn, matter_id)
     items = analyze.item_map(conn, matter_id)
     for it in data["issues"]:
         fids = [key_to_id[k] for k in it["facts"] if k in key_to_id]
         dates = sorted(d for d in (analyze.said_date(facts[i], items) for i in fids) if d)
-        conn.execute("INSERT INTO issues(matter_id, topic, fact_ids_json, first_flagged, last_mentioned, mentions) "
-                     "VALUES (?,?,?,?,?,?)", (str(matter_id), it["topic"], json.dumps(fids),
+        conn.execute("INSERT INTO issues(topic, fact_ids_json, first_flagged, last_mentioned, mentions) "
+                     "VALUES (?,?,?,?,?)", (it["topic"], json.dumps(fids),
                                               dates[0] if dates else None, dates[-1] if dates else None,
                                               len({s for i in fids for s in facts[i]["source_ids"]})))
     conn.commit()

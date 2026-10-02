@@ -1,4 +1,4 @@
-"""SQLite helpers shared by the pipeline and the product layer."""
+"""SQLite helpers shared by the pipeline (get_meta, fact_row, ...) and the product layer (q, x, J)."""
 import json
 import os
 import sqlite3
@@ -20,7 +20,6 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path or db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA.read_text())
     return conn
 
@@ -51,3 +50,32 @@ def fact_row(row) -> dict:
     d["source_ids"] = json.loads(d.pop("source_ids_json") or "[]")
     d["is_open_issue"] = bool(d["is_open_issue"])
     return d
+
+
+# ---- product-side helpers (each opens its own short-lived connection) ----
+
+def q(sql, args=()):
+    conn = connect()
+    try:
+        return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    finally:
+        conn.close()
+
+
+def x(sql, args=()):
+    conn = connect()
+    try:
+        cur = conn.execute(sql, args)
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def J(s, default=None):
+    if s is None or s == "":
+        return default
+    try:
+        return json.loads(s)
+    except (TypeError, ValueError):
+        return default

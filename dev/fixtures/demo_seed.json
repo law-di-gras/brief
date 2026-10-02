@@ -1,0 +1,56 @@
+{
+  "_note": "INVENTED demo data in Clio API shape so the product side runs before the real export is wired in. Not the real matter.",
+  "matter": {
+    "id": 9001, "display_number": "00042-Sapini", "description": "Sapini v. Harlow, motor vehicle collision",
+    "status": "Open", "open_date": "2026-03-16", "client": {"id": 101, "name": "Marco Sapini", "type": "Person"},
+    "matter_stage": {"name": "Treatment"}, "practice_area": {"name": "Personal Injury"},
+    "custom_field_values": [
+      {"field_name": "Estimated Case Value", "value": "185000"},
+      {"field_name": "Policy Limits", "value": "100000"},
+      {"field_name": "Medical Specials to Date", "value": "22180.00"},
+      {"field_name": "Health Plan Lien", "value": "6400"}
+    ]
+  },
+  "relationships": [
+    {"id": 1, "description": "Treating provider, orthopedic surgeon", "contact": {"id": 201, "name": "McCulloch Orthopedics", "type": "Company"}},
+    {"id": 2, "description": "Treating provider, physical therapy", "contact": {"id": 202, "name": "Bayside Physical Therapy", "type": "Company"}},
+    {"id": 3, "description": "Adverse insurer, claims adjuster", "contact": {"id": 301, "name": "Harbor Mutual Insurance", "type": "Company"}},
+    {"id": 4, "description": "Opposing counsel", "contact": {"id": 302, "name": "Dana Reyes", "type": "Person"}}
+  ],
+  "notes": [
+    {"id": 1, "subject": "Intake", "date": "2026-03-16", "detail": "Client rear-ended at a red light on March 9, 2026. Complains of right shoulder and neck pain. Police report requested."},
+    {"id": 2, "subject": "Call with adjuster", "date": "2026-06-03", "detail": "Call with adjuster at Harbor Mutual. Adjuster stated the policy limit is $50,000 per person. Asked for the declarations page in writing."},
+    {"id": 3, "subject": "Surgery recommended", "date": "2026-08-20", "detail": "Dr. McCulloch recommends arthroscopic shoulder surgery. Demand cannot go out until surgery is done and final bills are in."},
+    {"id": 4, "subject": "Call to McCulloch office", "date": "2026-09-11", "detail": "Called McCulloch's office about the surgery date. Front desk says they are waiting for the client to call and schedule."},
+    {"id": 5, "subject": "Call with client", "date": "2026-09-24", "detail": "Spoke with client. He says he will schedule the surgery whenever the office calls him; nobody has called."},
+    {"id": 6, "subject": "Lien status", "date": "2026-09-29", "detail": "Health plan lien amount still unconfirmed. Lien letter says $6,400 but the plan has not sent the itemization."}
+  ],
+  "communications": [
+    {"id": 1, "type": "EmailCommunication", "subject": "Request for surgery date and updated records", "date": "2026-08-25", "body": "Please send the scheduled surgery date and updated treatment records for our client.", "senders": [{"id": 1, "name": "Firm", "type": "User"}], "receivers": [{"id": 201, "name": "McCulloch Orthopedics", "type": "Contact"}]},
+    {"id": 2, "type": "EmailCommunication", "subject": "Second request: surgery date, records and billing", "date": "2026-09-08", "body": "Second request: please confirm the surgery date and send updated records and billing.", "senders": [{"id": 1, "name": "Firm", "type": "User"}], "receivers": [{"id": 201, "name": "McCulloch Orthopedics", "type": "Contact"}]},
+    {"id": 3, "type": "PhoneCommunication", "subject": "Client check-in", "date": "2026-09-24", "body": "Client called. Still attending physical therapy twice a week, last session September 22.", "senders": [{"id": 101, "name": "Marco Sapini", "type": "Contact"}], "receivers": [{"id": 1, "name": "Firm", "type": "User"}]},
+    {"id": 4, "type": "EmailCommunication", "subject": "Billing ledger request", "date": "2026-09-15", "body": "Please send the billing ledger through August.", "senders": [{"id": 1, "name": "Firm", "type": "User"}], "receivers": [{"id": 202, "name": "Bayside Physical Therapy", "type": "Contact"}]},
+    {"id": 5, "type": "EmailCommunication", "subject": "Acknowledgment of representation", "date": "2026-09-30", "body": "We acknowledge your letter of representation. Coverage review is ongoing.", "senders": [{"id": 301, "name": "Harbor Mutual Insurance", "type": "Contact"}], "receivers": [{"id": 1, "name": "Firm", "type": "User"}]}
+  ],
+  "tasks": [
+    {"id": 1, "name": "Follow up with McCulloch on surgery date", "status": "pending", "due_at": "2026-09-25", "description": "Third follow-up if no answer."},
+    {"id": 2, "name": "Draft demand letter", "status": "pending", "due_at": "2026-10-20", "description": "Blocked until final bills are in."},
+    {"id": 3, "name": "Request declarations page from Harbor Mutual", "status": "pending", "due_at": "2026-10-06", "description": ""},
+    {"id": 4, "name": "Send letter of representation", "status": "complete", "due_at": "2026-03-20", "description": ""}
+  ],
+  "calendar_entries": [
+    {"id": 1, "summary": "Physical therapy, Bayside", "start_at": "2026-10-06T16:00:00Z", "attendees": [{"id": 202, "name": "Bayside Physical Therapy", "type": "Contact"}]},
+    {"id": 2, "summary": "Follow-up with Dr. McCulloch", "start_at": "2026-10-14T17:30:00Z", "attendees": [{"id": 201, "name": "McCulloch Orthopedics", "type": "Contact"}]},
+    {"id": 3, "summary": "Statute check-in", "start_at": "2026-10-20T00:30:00Z"},
+    {"id": 4, "summary": "Initial consult", "start_at": "2026-03-16T17:00:00Z"}
+  ],
+  "activities": [
+    {"id": 1, "type": "ExpenseEntry", "date": "2026-03-18", "note": "Police report fee", "total": 25.0},
+    {"id": 2, "type": "ExpenseEntry", "date": "2026-07-02", "note": "Medical records fee", "total": 86.5},
+    {"id": 3, "type": "ExpenseEntry", "date": "2026-08-30", "note": "Courier", "total": 18.0}
+  ],
+  "documents": [
+    {"id": 1, "name": "Police Report.pdf", "received_at": "2026-03-25"},
+    {"id": 2, "name": "Orthopedic records (scanned).pdf", "received_at": "2026-07-10"}
+  ]
+}

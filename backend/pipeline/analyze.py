@@ -54,12 +54,12 @@ SCHEMA = {
 
 def load_facts(conn, matter_id) -> dict[int, dict]:
     return {r["id"]: db.fact_row(r) for r in conn.execute(
-        "SELECT * FROM facts WHERE matter_id=? ORDER BY id", (str(matter_id),))}
+        "SELECT * FROM facts ORDER BY id")}
 
 
 def item_map(conn, matter_id) -> dict[str, dict]:
     return {r["item_id"]: dict(r) for r in conn.execute(
-        "SELECT item_id, item_date, text, title, clio_type, source FROM items WHERE matter_id=?", (str(matter_id),))}
+        "SELECT item_id, item_date, text, title, clio_type, source FROM items")}
 
 
 def fact_date(f: dict, items: dict) -> str | None:
@@ -94,7 +94,7 @@ def analyze(conn, matter_id) -> dict:
     facts = load_facts(conn, matter_id)
     items = item_map(conn, matter_id)
     old_status = {r["fingerprint"]: r["status"] for r in conn.execute(
-        "SELECT fingerprint, status FROM conflicts WHERE matter_id=?", (matter_id,))}
+        "SELECT fingerprint, status FROM conflicts")}
     conflicts, issues = [], []
     drops = Counter()
 
@@ -137,7 +137,7 @@ def analyze(conn, matter_id) -> dict:
         if f["is_open_issue"] and f["id"] not in claimed:
             issues.append({"topic": f["text"][:80], "fact_ids": [f["id"]], "resolved_by": None})
 
-    conn.execute("DELETE FROM conflicts WHERE matter_id=?", (matter_id,))
+    conn.execute("DELETE FROM conflicts")
     seen = set()
     for c in conflicts:
         fp = fingerprint(c["fact_ids"])
@@ -145,12 +145,12 @@ def analyze(conn, matter_id) -> dict:
             continue
         seen.add(fp)
         conn.execute(
-            """INSERT INTO conflicts(matter_id, fingerprint, fact_ids_json, topic, explanation, severity, kpi_affected, status)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (matter_id, fp, json.dumps(c["fact_ids"]), c["topic"], c["explanation"], c["severity"],
+            """INSERT INTO conflicts(fingerprint, fact_ids_json, topic, explanation, severity, kpi_affected, status)
+               VALUES (?,?,?,?,?,?,?)""",
+            (fp, json.dumps(c["fact_ids"]), c["topic"], c["explanation"], c["severity"],
              c["kpi_affected"], old_status.get(fp, "open")))
 
-    conn.execute("DELETE FROM issues WHERE matter_id=?", (matter_id,))
+    conn.execute("DELETE FROM issues")
     for it in issues:
         fs = [facts[i] for i in it["fact_ids"]]
         dates = sorted(d for d in (said_date(f, items) for f in fs) if d)
@@ -161,9 +161,9 @@ def analyze(conn, matter_id) -> dict:
                 (dates and (said_date(facts[resolved], items) or "") < dates[-1]):
             resolved = None
         conn.execute(
-            """INSERT INTO issues(matter_id, topic, fact_ids_json, first_flagged, last_mentioned, mentions, resolved_by_fact)
-               VALUES (?,?,?,?,?,?,?)""",
-            (matter_id, it["topic"], json.dumps(it["fact_ids"]), dates[0] if dates else None,
+            """INSERT INTO issues(topic, fact_ids_json, first_flagged, last_mentioned, mentions, resolved_by_fact)
+               VALUES (?,?,?,?,?,?)""",
+            (it["topic"], json.dumps(it["fact_ids"]), dates[0] if dates else None,
              dates[-1] if dates else None, mentions, resolved))
     conn.commit()
     log.info("analysis: %d conflicts, %d issues, drops %s", len(seen), len(issues), dict(drops))

@@ -33,15 +33,16 @@ def _d(value) -> str | None:
     return str(value)[:10]
 
 
-def _person(p) -> str | None:
+def _person(p, role=None) -> dict | None:
+    """{"id": "contact:<id>", "name": ..., "role": ...}, the shape the product side reads."""
     if not p or p.get("id") is None:
         return None
     kind = "user" if p.get("type") == "User" else "contact"
-    return f"{kind}:{p['id']}"
+    return {"id": f"{kind}:{p['id']}", "name": p.get("name"), "role": role}
 
 
 def _names(people) -> str:
-    return ", ".join(p.get("name") or _person(p) or "?" for p in people or [])
+    return ", ".join(p.get("name") or (_person(p) or {}).get("id") or "?" for p in people or [])
 
 
 def content_hash(item: dict) -> str:
@@ -73,7 +74,17 @@ def norm_matter(m: dict) -> dict:
     return dict(
         item_id=f"matter:{m['id']}", source="clio", clio_type="matter", clio_id=str(m["id"]),
         title="Matter details and custom fields", text="\n".join(lines), item_date=_d(m.get("open_date")),
-        people=[p for p in [_person(m.get("client"))] if p], raw=m,
+        people=[p for p in [_person(m.get("client"), "client")] if p], raw=m,
+    )
+
+
+def norm_relationship(r: dict) -> dict:
+    """A roster entry. Product code builds its contact list from these (raw = the Clio record)."""
+    c = r.get("contact") or {}
+    return dict(
+        item_id=f"relationship:{r['id']}", source="clio", clio_type="relationship", clio_id=str(r["id"]),
+        title=c.get("name") or "Contact", text=r.get("description") or "", item_date=None,
+        people=[p for p in [_person(c, r.get("description") or "related")] if p], raw=r,
     )
 
 
@@ -93,7 +104,7 @@ def norm_comm(c: dict) -> dict:
     return dict(
         item_id=f"comm:{c['id']}", source="clio", clio_type="communication", clio_id=str(c["id"]),
         title=c.get("subject") or kind, text=text, item_date=_d(c.get("date") or c.get("created_at")),
-        people=[p for p in map(_person, senders + receivers) if p], raw=c,
+        people=[p for p in [_person(s, "sender") for s in senders] + [_person(r, "receiver") for r in receivers] if p], raw=c,
     )
 
 
@@ -104,7 +115,7 @@ def norm_task(t: dict) -> dict:
     return dict(
         item_id=f"task:{t['id']}", source="clio", clio_type="task", clio_id=str(t["id"]),
         title=t.get("name") or "Task", text=text, item_date=_d(t.get("due_at") or t.get("created_at")),
-        people=[p for p in [_person(t.get("assignee"))] if p], raw=t,
+        people=[p for p in [_person(t.get("assignee"), "assignee")] if p], raw=t,
     )
 
 
@@ -141,13 +152,13 @@ def upsert_item(conn, matter_id, item: dict) -> bool:
         conn.execute("UPDATE items SET last_synced_at=? WHERE item_id=?", (now, item["item_id"]))
         return False
     conn.execute(
-        """INSERT INTO items(item_id, matter_id, source, clio_type, clio_id, title, text, item_date,
+        """INSERT INTO items(item_id, source, clio_type, clio_id, title, text, item_date,
                              people_json, raw_json, hash, first_seen_at, last_synced_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(item_id) DO UPDATE SET title=excluded.title, text=excluded.text,
              item_date=excluded.item_date, people_json=excluded.people_json, raw_json=excluded.raw_json,
              hash=excluded.hash, last_synced_at=excluded.last_synced_at""",
-        (item["item_id"], str(matter_id), item["source"], item.get("clio_type"), item.get("clio_id"),
+        (item["item_id"], item["source"], item.get("clio_type"), item.get("clio_id"),
          item.get("title"), item["text"], item.get("item_date"), json.dumps(item.get("people") or []),
          json.dumps(item.get("raw"), default=str) if item.get("raw") is not None else None, h, now, now),
     )
@@ -197,7 +208,7 @@ def sync(conn, clio, matter_id, full: bool = False) -> list[str]:
     db.set_meta(conn, matter_id, "matter", matter)
     db.set_meta(conn, matter_id, "roster", build_roster(matter, relationships, user))
 
-    items = [norm_matter(matter)]
+    items = [norm_matter(matter)] + [norm_relationship(r) for r in relationships]
     for rec in clio.get("/notes.json", {**q, "type": "Matter", "fields": FIELDS["notes"]})["data"]:
         items.append(norm_note(rec))
     for rec in clio.get("/communications.json", {**q, "fields": FIELDS["communications"]})["data"]:
@@ -220,8 +231,7 @@ def sync(conn, clio, matter_id, full: bool = False) -> list[str]:
         seen = {it["item_id"] for it in items}
         seen_docs = {str(d["id"]) for d in documents}
         stale = []
-        for row in conn.execute("SELECT item_id, clio_type, clio_id FROM items WHERE matter_id=? AND source='clio'",
-                                (matter_id,)):
+        for row in conn.execute("SELECT item_id, clio_type, clio_id FROM items WHERE source='clio'"):
             if row["clio_type"] == "document":
                 if row["clio_id"] not in seen_docs:
                     stale.append(row["item_id"])
@@ -234,8 +244,7 @@ def sync(conn, clio, matter_id, full: bool = False) -> list[str]:
 
     db.set_meta(conn, matter_id, "clio_synced_at", started)
     db.set_meta(conn, matter_id, "last_activity_date",
-                conn.execute("SELECT MAX(item_date) d FROM items WHERE matter_id=? AND item_date<=date('now')",
-                             (matter_id,)).fetchone()["d"])
+                conn.execute("SELECT MAX(item_date) d FROM items WHERE item_date<=date('now')").fetchone()["d"])
     conn.commit()
     log.info("sync: %d items, %d changed", len(items), len(changed))
     return changed
