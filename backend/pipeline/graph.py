@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import date
 
 from backend import db
-from backend.pipeline import llm
+from backend.pipeline import llm, validate
 from backend.pipeline.analyze import item_map, load_facts, said_date
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,20 @@ SCHEMA = {
     },
     "required": ["nodes", "resolutions"],
 }
+
+# "Three written requests", "2 follow-up letters": a count the file itself states.
+STATED_ASKS = re.compile(r"\b(\w+)\s+(?:written\s+|separate\s+|follow-up\s+|prior\s+)?"
+                         r"(?:requests|letters|follow-ups|calls|emails|reminders)\b", re.I)
+
+
+def stated_asks(text: str) -> int:
+    best = 0
+    for m in STATED_ASKS.finditer(text or ""):
+        w = m.group(1).lower()
+        n = int(w) if w.isdigit() else validate.WORDS.get(w, 0)
+        best = max(best, n if n < 100 else 0)
+    return best
+
 
 RESOLUTION_CATEGORIES = {"treatment", "provider_request", "procedure", "discovery", "client_contact",
                          "coverage", "lien", "damages"}
@@ -169,17 +183,21 @@ def build_graph(conn, matter_id, today: date | None = None) -> dict:
         srcs = sources_for(root)
         ask_dates = sorted(d for d in (items.get(s, {}).get("item_date") for s in srcs) if d)
         requests = [s for s in srcs if items.get(s, {}).get("clio_type") in ("communication", "task")]
+        # Count the asks on file, or the number the file itself states, whichever is larger.
+        asked = max([len(requests)] + [stated_asks(items.get(s, {}).get("text")) for s in srcs])
         first = ask_dates[0] if ask_dates else None
         root_info = {
             "node_id": root,
             "label": nodes.get(root, {}).get("label", root),
-            "dependents": [nodes.get(n, {}).get("label", n) for n in sorted(dependents(root))],
+            # nearest first, following the chain up to the outcome, then any side branches
+            "dependents": [nodes.get(n, {}).get("label", n)
+                           for n in chain[1:] + sorted(dependents(root) - set(chain))],
             "chain": [nodes.get(n, {}).get("label", n) for n in chain],
             "holders": named or ["unknown"],
             "disputed": len(named) > 1,
             "quotes": {h: q for h, q in holders.items()},
             "source_ids": sorted(srcs),
-            "request_count": len(requests),
+            "request_count": asked,
             "first_asked": first,
             "last_asked": ask_dates[-1] if ask_dates else None,
             "days_waiting": (today - date.fromisoformat(first)).days if first else None,

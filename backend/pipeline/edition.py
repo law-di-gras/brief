@@ -25,7 +25,8 @@ holding the case up.
 Write:
 - headline: at most 14 words, the single most important thing about the case right now.
 - lead: up to 4 sentences, most important first. Say what changed since the reader's last visit if
-  anything did, what is holding the case up and who holds it, and where the file disagrees with itself.
+  anything did, what is holding the case up and who holds it, and the case value and coverage.
+  The conflicts are shown in their own section below the lead: mention at most one, in a few words.
 
 Every sentence must rest on the listed facts: give the ids of the facts it relies on. Use only numbers,
 amounts and dates that appear in those facts. Plain words, no adjectives of praise or alarm, no advice.
@@ -71,17 +72,30 @@ def _cited(sentence: dict, facts: dict, items: dict) -> dict | None:
 
 
 def _fallback(facts, graph, conflicts) -> tuple[dict, list]:
-    """No-AI front page from validated facts only."""
+    """No-AI front page from validated facts only.
+
+    Headline: the most important fact behind the root blocker. Lead: the most important remaining
+    facts, one per category, leaving out facts the corrections section already shows.
+    """
+    def cite(f):
+        return {"text": f["text"], "fact_ids": [f["id"]], "source_ids": f["source_ids"]}
+
     ranked = sorted(facts.values(), key=lambda f: (-f["importance"], -(f["id"])))
-    lead = [{"text": f["text"], "fact_ids": [f["id"]], "source_ids": f["source_ids"]} for f in ranked[:MAX_LEAD]]
+    if not ranked:
+        return {"text": "No facts extracted yet", "fact_ids": [], "source_ids": []}, []
     root = graph.get("root")
-    if root:
-        headline = {"text": f"Case held up: {root['label']}", "fact_ids": [], "source_ids": root["source_ids"]}
-    elif ranked:
-        headline = dict(lead[0])
-    else:
-        headline = {"text": "No facts extracted yet", "fact_ids": [], "source_ids": []}
-    return headline, lead
+    root_sources = set(root["source_ids"]) if root else set()
+    head = next((f for f in ranked if set(f["source_ids"]) & root_sources), ranked[0])
+    shown = {i for c in conflicts for i in c["fact_ids"]} | {head["id"]}
+    lead, cats = [], set()
+    for f in ranked:
+        if f["id"] in shown or f["category"] in cats:
+            continue
+        lead.append(cite(f))
+        cats.add(f["category"])
+        if len(lead) == MAX_LEAD - 1:
+            break
+    return cite(head), lead
 
 
 def write_front_page(conn, matter_id, since, facts, items, graph, conflicts, issues) -> tuple[dict, list]:
@@ -172,6 +186,7 @@ def product_blocker(conn, matter_id, graph: dict, facts: dict, items: dict) -> d
             for i in items.values())
         return {"node": root["node_id"], "label": root["label"], "resolved": False, "disputed": root["disputed"],
                 "holders": holders, "dependents": root["dependents"], "requests_sent": root["request_count"],
+                "days_waiting": root["days_waiting"],
                 "reply_received": pending_reply}
     cleared = []
     for n in graph["nodes"]:

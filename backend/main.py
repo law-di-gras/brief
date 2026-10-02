@@ -1,4 +1,6 @@
 import os
+from datetime import timedelta
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -8,6 +10,7 @@ except ImportError:
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend import db
@@ -46,15 +49,40 @@ def sync(mid: str):
     return bridge.run_pipeline(mid)
 
 
+DEFAULT_SINCE_DAYS = 14
+
+
+def client_photo(mid: str):
+    conn = db.connect()
+    try:
+        path = db.get_meta(conn, mid, "client_photo")
+    finally:
+        conn.close()
+    return path if path and Path(path).exists() else None
+
+
+@app.get("/matters/{mid}/photo")
+def photo(mid: str):
+    return FileResponse(need(client_photo(mid), "No client photo on file"))
+
+
 @app.get("/matters/{mid}/edition")
 def edition(mid: str, since: str | None = None, user: str = "me"):
     need(det.matter(mid), "Matter not loaded. Run the sync or dev/load_seed.py.")
+    since_source = "query" if since else None
     if not since:
         v = db.q("SELECT last_visit_at FROM visits WHERE user_id=? AND matter_id=?", (user, mid))
-        since = v[0]["last_visit_at"] if v else None
+        if v:
+            since, since_source = v[0]["last_visit_at"], "visit"
+        else:
+            # First visit: still answer "what's been happening", over a fixed recent window.
+            since, since_source = (det.today() - timedelta(days=DEFAULT_SINCE_DAYS)).isoformat(), "default"
     ed = bridge.build_edition(mid, since) or {}
+    masthead = det.masthead(mid, since)
+    masthead.update(since_source=since_source, since_days=DEFAULT_SINCE_DAYS,
+                    photo_url=f"/matters/{mid}/photo" if client_photo(mid) else None)
     return {
-        "masthead": det.masthead(mid, since),
+        "masthead": masthead,
         "headline": ed.get("headline"),
         "lead": ed.get("lead") or [],
         "blocker": ed.get("blocker"),
@@ -179,8 +207,6 @@ def reply(token: str, body: ReplyIn, bg: BackgroundTasks):
 
 # ---------- built frontend (optional) ----------
 # If frontend/dist exists, serve it here so the app runs without Node: open http://localhost:8000/
-from pathlib import Path
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

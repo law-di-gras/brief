@@ -9,11 +9,61 @@ const Cited = ({ s, onCite, className = "" }) => (
   <span className={`cite ${className}`} onClick={() => onCite(s)}>{s.text}</span>
 );
 
+const times = (n) => (n === 1 ? "once" : `${n} times`);
+const COMING_UP_SHOWN = 4;
+
+function Toggle({ open, onClick, children }) {
+  return (
+    <button className="mt-1 text-xs font-medium text-stone-500 hover:text-ink" onClick={onClick}>
+      {open ? "Hide" : children}
+    </button>
+  );
+}
+
+function Correction({ badge, red, title, sub, facts, onCite, dim }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`border-b border-rule py-3 ${dim ? "opacity-50" : ""}`}>
+      <div className="flex items-baseline gap-2">
+        <span className={red ? "badge-red" : "border border-stone-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"}>{badge}</span>
+        <span className="font-medium">{title}</span>
+      </div>
+      {sub && <p className="mt-1 text-sm text-stone-600">{sub}</p>}
+      {facts.length > 0 && <Toggle open={open} onClick={() => setOpen(!open)}>Show the {facts.length === 1 ? "source" : `${facts.length} sources`}</Toggle>}
+      {open && (
+        <ul className="mt-2 space-y-1 border-l-2 border-rule pl-3">
+          {facts.map((f) => (
+            <li key={f.id} className="text-sm">
+              {f.event_date && <span className="text-stone-400">{fmtShort(f.event_date)} </span>}
+              <Cited s={f} onCite={onCite} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Kpi({ k, onCite }) {
+  const big = k.amount != null ? fmtMoney(k.amount) : null;
+  return (
+    <div className={`cursor-pointer bg-white p-3 hover:bg-amber-50 ${k.slot === "firm_spend" ? "col-span-2" : ""}`}
+      title="Click to see the full field and where it came from"
+      onClick={() => k.source_ids.length && onCite({ text: `${k.label}: ${k.field_name}`, source_ids: k.source_ids.slice(0, 5), evidence: String(k.value ?? "") })}>
+      <div className="kicker">{k.label}</div>
+      <div className={big ? "font-serif text-2xl" : "mt-1 text-sm text-stone-500"}>{big || (k.value != null ? "See field" : "Not on file")}</div>
+      <div className="truncate text-xs text-stone-500" title={k.summary || k.field_name || ""}>{k.summary || k.field_name || ""}</div>
+      {k.conflict && <div className="mt-1" title={k.conflict.explanation}><span className="badge-red">Conflict in file</span></div>}
+    </div>
+  );
+}
+
 export default function AttorneyEdition({ matterId }) {
   const [d, setD] = useState(null);
   const [cite, setCite] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [allComing, setAllComing] = useState(false);
   const base = `/matters/${matterId}`;
 
   const load = useCallback(async () => {
@@ -38,14 +88,18 @@ export default function AttorneyEdition({ matterId }) {
   return (
     <div className="mx-auto max-w-6xl px-6 pb-16">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b-4 border-double border-ink py-5">
-        <div>
-          <div className="kicker">{m.display_number} · {m.stage || m.status}</div>
-          <h1 className="font-serif text-4xl font-bold tracking-tight">{m.client}</h1>
-          <div className="text-sm text-stone-600">{m.description}</div>
+        <div className="flex items-center gap-4">
+          {m.photo_url && <img src={m.photo_url} alt={m.client} className="h-16 w-16 shrink-0 border border-rule object-cover" />}
+          <div>
+            <div className="kicker">{m.display_number} · {m.stage || m.status}</div>
+            <h1 className="font-serif text-4xl font-bold tracking-tight">{m.client}</h1>
+            <div className="text-sm text-stone-600">{m.description}</div>
+          </div>
         </div>
         <div className="text-right">
           <div className="text-sm">
-            {m.since ? <><b>{m.updates_since}</b> {m.updates_since === 1 ? "update" : "updates"} since {fmtDate(m.since)}</> : "First visit"}
+            <b>{m.updates_since ?? 0}</b> {m.updates_since === 1 ? "update" : "updates"}{" "}
+            {m.since_source === "default" ? `in the last ${m.since_days} days` : m.since_source === "visit" ? `since your last visit, ${fmtDate(m.since)}` : `since ${fmtDate(m.since)}`}
           </div>
           <div className="mt-2 flex justify-end gap-2">
             <button className="btn-ghost" disabled={busy} onClick={act(() => post(`${base}/sync`))}>Re-sync</button>
@@ -58,7 +112,7 @@ export default function AttorneyEdition({ matterId }) {
       {m.changes.length > 0 && (
         <div className="border-b border-rule py-2 text-sm">
           <span className="kicker mr-2">New</span>
-          {m.changes.map((c) => (
+          {m.changes.slice(0, 5).map((c) => (
             <span key={c.item_id} className="cite mr-4" onClick={() => setCite({ text: c.title, source_ids: [c.item_id] })}>
               {fmtShort(c.date)} {c.title}
             </span>
@@ -89,27 +143,12 @@ export default function AttorneyEdition({ matterId }) {
           <section>
             <div className="kicker border-b border-rule pb-1">Corrections: where the file disagrees with itself</div>
             {d.corrections.conflicts.map((c) => (
-              <div key={c.id} className="border-b border-rule py-3">
-                <div className="flex items-center gap-2"><span className="badge-red">Conflict</span><span className="font-medium">{c.topic}</span></div>
-                <p className="mt-1 text-sm text-stone-600">{c.explanation}</p>
-                <ul className="mt-2 space-y-1">
-                  {c.facts.map((f) => (
-                    <li key={f.id} className="text-sm"><span className="text-stone-400">{fmtShort(f.event_date)} </span><Cited s={f} onCite={setCite} /></li>
-                  ))}
-                </ul>
-              </div>
+              <Correction key={`c${c.id}`} badge="Conflict" red title={c.topic} sub={c.explanation} facts={c.facts} onCite={setCite} />
             ))}
             {d.corrections.issues.map((i) => (
-              <div key={i.id} className={`border-b border-rule py-3 ${i.resolved ? "opacity-50" : ""}`}>
-                <div className="flex items-center gap-2">
-                  <span className="border border-stone-500 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">{i.resolved ? "Resolved" : "Open issue"}</span>
-                  <span className="font-medium">{i.topic}</span>
-                </div>
-                <p className="mt-1 text-xs text-stone-500">
-                  Flagged {fmtDate(i.first_flagged)} · open {i.days_open} days · mentioned {i.mentions} {i.mentions === 1 ? "time" : "times"}
-                </p>
-                {i.facts.map((f) => <div key={f.id} className="mt-1 text-sm"><Cited s={f} onCite={setCite} /></div>)}
-              </div>
+              <Correction key={`i${i.id}`} badge={i.resolved ? "Resolved" : "Open issue"} title={i.topic} dim={i.resolved}
+                sub={`Open ${i.days_open} days · flagged ${fmtDate(i.first_flagged)}${i.mentions > 1 ? ` · mentioned ${i.mentions} times` : ""}`}
+                facts={i.facts} onCite={setCite} />
             ))}
             {!d.corrections.conflicts.length && !d.corrections.issues.length && <p className="py-3 text-sm text-stone-500">Nothing flagged.</p>}
           </section>
@@ -117,15 +156,7 @@ export default function AttorneyEdition({ matterId }) {
 
         <aside className="space-y-6">
           <div className="grid grid-cols-2 gap-px border border-rule bg-rule">
-            {d.kpis.map((k) => (
-              <div key={k.slot} className={`cursor-pointer bg-white p-3 hover:bg-amber-50 ${k.slot === "firm_spend" ? "col-span-2" : ""}`}
-                onClick={() => k.source_ids.length && setCite({ text: `${k.label}: ${k.field_name}`, source_ids: k.source_ids.slice(0, 5), evidence: String(k.value ?? "") })}>
-                <div className="kicker">{k.label}</div>
-                <div className="font-serif text-2xl">{k.amount != null ? fmtMoney(k.amount) : k.value || "n/a"}</div>
-                <div className="text-xs text-stone-500">{k.field_name || "not on file"}</div>
-                {k.conflict && <div className="mt-1" title={k.conflict.explanation}><span className="badge-red">Conflict in file</span></div>}
-              </div>
-            ))}
+            {d.kpis.map((k) => <Kpi key={k.slot} k={k} onCite={setCite} />)}
           </div>
 
           <div className="card">
@@ -140,7 +171,7 @@ export default function AttorneyEdition({ matterId }) {
                   {w.owes.map((o) => (
                     <div key={o.ref} className="text-sm">
                       <span className="cite" onClick={() => setCite({ text: o.what, source_ids: o.source_ids })}>{o.what}</span>
-                      <span className="text-xs text-stone-500">{o.times_asked > 0 && ` · asked ${o.times_asked}×`}{o.first_asked && ` · since ${fmtShort(o.first_asked)}`}</span>
+                      <span className="text-xs text-stone-500">{o.times_asked > 0 && ` · asked ${times(o.times_asked)}`}{o.first_asked && ` · since ${fmtShort(o.first_asked)}`}</span>
                     </div>
                   ))}
                 </li>
@@ -152,7 +183,7 @@ export default function AttorneyEdition({ matterId }) {
           <div className="card">
             <div className="kicker">Coming up, next 21 days</div>
             <ul className="mt-2 space-y-1.5">
-              {d.coming_up.map((c) => (
+              {(allComing ? d.coming_up : d.coming_up.filter((c, i) => c.overdue || i < d.coming_up.filter((x) => x.overdue).length + COMING_UP_SHOWN)).map((c) => (
                 <li key={c.item_id} className="flex gap-2 text-sm">
                   <span className={`w-16 shrink-0 ${c.overdue ? "font-semibold text-flag" : "text-stone-500"}`}>{c.overdue ? "Overdue" : fmtShort(c.date)}</span>
                   <span className="cite" onClick={() => setCite({ text: c.title, source_ids: [c.item_id] })}>
@@ -162,6 +193,9 @@ export default function AttorneyEdition({ matterId }) {
               ))}
               {!d.coming_up.length && <li className="text-sm text-stone-500">Nothing scheduled.</li>}
             </ul>
+            {d.coming_up.filter((c) => !c.overdue).length > COMING_UP_SHOWN && (
+              <Toggle open={allComing} onClick={() => setAllComing(!allComing)}>Show all {d.coming_up.length}</Toggle>
+            )}
           </div>
 
           <div className="card">

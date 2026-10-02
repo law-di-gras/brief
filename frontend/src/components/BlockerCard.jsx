@@ -1,30 +1,34 @@
 import { fmtDate } from "../api.js";
 
+const times = (n) => (n === 1 ? "once" : `${n} times`);
+
 export default function BlockerCard({ blocker, onCite }) {
   if (!blocker) return null;
   if (blocker.resolved)
     return (
       <div className="card border-l-4 border-l-emerald-600">
         <div className="kicker">Root blocker cleared</div>
-        <p className="mt-1 font-serif text-xl capitalize">{blocker.label}</p>
+        <p className="mt-1 font-serif text-xl first-letter:uppercase">{blocker.label}</p>
       </div>
     );
+  const stats = [
+    blocker.requests_sent > 0 && `Asked ${times(blocker.requests_sent)}`,
+    blocker.days_waiting != null && `waiting ${blocker.days_waiting} days`,
+  ].filter(Boolean);
   return (
     <div className="card border-l-4 border-l-flag">
       <div className="flex items-center gap-2">
         <span className="kicker">The one thing holding this case up</span>
         {blocker.disputed && <span className="badge-red">Disputed</span>}
       </div>
-      <p className="mt-1 font-serif text-2xl capitalize">{blocker.label}</p>
+      <p className="mt-1 font-serif text-2xl first-letter:uppercase">{blocker.label}</p>
       {blocker.dependents?.length > 0 && (
         <p className="mt-2 text-sm text-stone-600">
-          <span className="capitalize">{blocker.label}</span>
-          {blocker.dependents.slice().reverse().map((d) => <span key={d}> → {d}</span>)}
+          <span className="text-stone-500">Holding up: </span>
+          {blocker.dependents.join(" → ")}
         </p>
       )}
-      <p className="mt-1 text-xs text-stone-500">
-        {blocker.dependents?.length || 0} things wait on this · asked {blocker.requests_sent ?? 0} times
-      </p>
+      {stats.length > 0 && <p className="mt-1 text-xs text-stone-500">{stats.join(" · ")}</p>}
       {blocker.reply_received && (
         <p className="mt-3 bg-amber-100 px-2 py-1 text-sm">A provider answered this. Re-sync to run it through the pipeline.</p>
       )}

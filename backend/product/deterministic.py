@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from backend import db
 from backend.product import ai
+from backend.pipeline.graph import stated_asks
 
 J = db.J
 META = ("matter", "relationship")
@@ -41,6 +42,28 @@ def local_date(s):
 
 def iso(d):
     return d.isoformat() if d else None
+
+
+AMOUNT_RE = re.compile(r"\$\s?(\d[\d,]*(?:\.\d+)?)")
+
+
+def first_amount(v):
+    """The headline number of a custom field: the value itself if numeric, else the first $ amount in its text."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = AMOUNT_RE.search(str(v))
+    return float(m.group(1).replace(",", "")) if m else money(v) if re.fullmatch(r"[\d,.\s$]+", str(v)) else None
+
+
+def summary_line(v, limit=70):
+    """First line or clause of a long custom field, for the KPI caption."""
+    if v is None or isinstance(v, (int, float)):
+        return None
+    s = str(v).strip().split("\n")[0]
+    s = re.split(r"(?<=[.;])\s", s)[0].rstrip(".;")
+    return s if len(s) <= limit else s[: limit - 1].rsplit(" ", 1)[0] + "…"
 
 
 def money(v):
@@ -129,8 +152,17 @@ def masthead(matter_id, since):
         d = local_date(i["item_date"])
         return bool(d) and sd < d <= today()
 
-    changed = [i for i in items("clio_type NOT IN ('matter','relationship')") if is_new(i)]
-    changed.sort(key=lambda i: i["item_date"] or "", reverse=True)
+    changed, seen_docs = [], set()
+    for i in sorted(items("clio_type NOT IN ('matter','relationship')"), key=lambda i: (i["item_date"] or "", i["item_id"]),
+                    reverse=True):
+        if not is_new(i):
+            continue
+        if i["clio_type"] == "document":          # one update per document, not one per page
+            if i["clio_id"] in seen_docs:
+                continue
+            seen_docs.add(i["clio_id"])
+            i = dict(i, title=re.sub(r", page \d+$", "", i["title"] or ""))
+        changed.append(i)
     return {
         "client": (raw.get("client") or {}).get("name"),
         "display_number": raw.get("display_number"),
@@ -173,7 +205,8 @@ def kpis(matter_id):
         hit = next(((n, v) for n, v in cfs if slots.get(n) == slot and v not in (None, "")), None)
         c = conflicts.get(slot)
         out.append({"slot": slot, "label": label, "field_name": hit[0] if hit else None,
-                    "value": hit[1] if hit else None, "amount": money(hit[1]) if hit else None,
+                    "value": hit[1] if hit else None, "amount": first_amount(hit[1]) if hit else None,
+                    "summary": summary_line(hit[1]) if hit else None,
                     "source_ids": [m["item_id"]] if hit and m else [],
                     "conflict": {"id": c["id"], "topic": c["topic"], "explanation": c["explanation"]} if c else None})
     fs = firm_spend()
@@ -202,7 +235,9 @@ def open_requests(contact_id, all_facts=None, all_deps=None):
     """What the firm is waiting on from one contact, with repeated asks grouped."""
     all_facts = facts() if all_facts is None else all_facts
     cdeps = [d for d in (deps() if all_deps is None else all_deps) if d["holder"] == contact_id]
-    item_dates = {i["item_id"]: i["item_date"] for i in db.q("SELECT item_id, item_date FROM items")}
+    item_rows = db.q("SELECT item_id, item_date, text FROM items")
+    item_dates = {i["item_id"]: i["item_date"] for i in item_rows}
+    item_texts = {i["item_id"]: i["text"] for i in item_rows}
     groups = {}
 
     def key_of(d):
@@ -233,7 +268,9 @@ def open_requests(contact_id, all_facts=None, all_deps=None):
         ref = hashlib.sha1(f"{contact_id}|{key}".encode()).hexdigest()[:12]
         what = g["what"][:1].upper() + g["what"][1:]
         out.append({"ref": ref, "node": key, "what": what, "first_asked": iso(dates[0]) if dates else None,
-                    "last_asked": iso(dates[-1]) if dates else None, "times_asked": len(g["asks"]),
+                    "last_asked": iso(dates[-1]) if dates else None,
+                    # asks on file, or the count the file itself states ("three written requests")
+                    "times_asked": max([len(g["asks"])] + [stated_asks(item_texts.get(s)) for s in g["source_ids"]]),
                     "source_ids": list(dict.fromkeys(g["source_ids"])),
                     "fields": request_fields(" ".join(g["texts"])), "answered": ref in answered})
     out.sort(key=lambda r: (r["answered"], -r["times_asked"], r["first_asked"] or "9"))
