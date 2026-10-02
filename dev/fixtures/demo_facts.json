@@ -1,0 +1,40 @@
+{
+  "_note": "INVENTED stand-in for A's facts.json. Matches demo_seed.json. Replaced by dev/fixtures/facts.json when it exists.",
+  "facts": [
+    {"id": 1, "text": "Client was rear-ended at a red light on March 9, 2026.", "category": "liability", "event_date": "2026-03-09", "entities": ["contact:101"], "source_ids": ["note:1"], "evidence": "Client rear-ended at a red light on March 9, 2026.", "audience": "internal", "importance": 5},
+    {"id": 2, "text": "Client reports right shoulder and neck pain.", "category": "injury", "event_date": "2026-03-16", "entities": ["contact:101"], "source_ids": ["note:1"], "evidence": "Complains of right shoulder and neck pain.", "audience": "shareable", "importance": 4},
+    {"id": 3, "text": "Adjuster stated the policy limit is $50,000 per person.", "category": "coverage", "event_date": "2026-06-03", "entities": ["contact:301"], "source_ids": ["note:2"], "evidence": "Adjuster stated the policy limit is $50,000 per person.", "audience": "internal", "importance": 5},
+    {"id": 4, "text": "The matter record lists policy limits of 100000.", "category": "coverage", "event_date": "2026-03-16", "entities": [], "source_ids": ["matter:9001"], "evidence": "Policy Limits: 100000", "audience": "internal", "importance": 3},
+    {"id": 5, "text": "Dr. McCulloch recommends arthroscopic shoulder surgery.", "category": "treatment", "event_date": "2026-08-20", "entities": ["contact:201", "contact:101"], "source_ids": ["note:3"], "evidence": "Dr. McCulloch recommends arthroscopic shoulder surgery.", "audience": "shareable", "importance": 5},
+    {"id": 6, "text": "Firm asked McCulloch for the surgery date and updated treatment records.", "category": "provider_request", "event_date": "2026-08-25", "entities": ["contact:201"], "source_ids": ["comm:1"], "evidence": "Please send the scheduled surgery date and updated treatment records for our client.", "audience": "shareable", "importance": 3},
+    {"id": 7, "text": "Firm sent a second request for the surgery date, records and billing.", "category": "provider_request", "event_date": "2026-09-08", "entities": ["contact:201"], "source_ids": ["comm:2"], "evidence": "please confirm the surgery date and send updated records and billing", "audience": "shareable", "importance": 3},
+    {"id": 8, "text": "McCulloch's office says it is waiting for the client to call and schedule.", "category": "treatment", "event_date": "2026-09-11", "entities": ["contact:201"], "source_ids": ["note:4"], "evidence": "they are waiting for the client to call and schedule", "audience": "internal", "importance": 4},
+    {"id": 9, "text": "Client says he will schedule the surgery whenever the office calls him.", "category": "client_contact", "event_date": "2026-09-24", "entities": ["contact:101", "contact:201"], "source_ids": ["note:5"], "evidence": "He says he will schedule the surgery whenever the office calls him", "audience": "shareable", "importance": 4},
+    {"id": 10, "text": "Client is attending physical therapy twice a week, last session September 22.", "category": "treatment", "event_date": "2026-09-22", "entities": ["contact:101", "contact:202"], "source_ids": ["comm:3"], "evidence": "Still attending physical therapy twice a week, last session September 22.", "audience": "shareable", "importance": 3},
+    {"id": 11, "text": "Firm asked Bayside for the billing ledger through August.", "category": "provider_request", "event_date": "2026-09-15", "entities": ["contact:202"], "source_ids": ["comm:4"], "evidence": "Please send the billing ledger through August.", "audience": "shareable", "importance": 3},
+    {"id": 12, "text": "Health plan lien amount is still unconfirmed.", "category": "lien", "event_date": "2026-09-29", "entities": [], "source_ids": ["note:6"], "evidence": "Health plan lien amount still unconfirmed.", "audience": "internal", "importance": 4, "is_open_issue": true},
+    {"id": 13, "text": "Harbor Mutual acknowledged representation and said coverage review is ongoing.", "category": "coverage", "event_date": "2026-09-30", "entities": ["contact:301"], "source_ids": ["comm:5"], "evidence": "Coverage review is ongoing.", "audience": "internal", "importance": 3},
+    {"id": 14, "text": "Demand cannot go out until surgery is done and final bills are in.", "category": "procedure", "event_date": "2026-08-20", "entities": [], "source_ids": ["note:3"], "evidence": "Demand cannot go out until surgery is done and final bills are in.", "audience": "internal", "importance": 4}
+  ],
+  "dependencies": [
+    {"id": 1, "blocked": "demand letter", "waiting_on": "final medical bills", "holder": "contact:201", "node_blocked": "demand_letter", "node_waiting": "final_bills", "source_ids": ["note:3"], "evidence": "Demand cannot go out until surgery is done and final bills are in."},
+    {"id": 2, "blocked": "final medical bills", "waiting_on": "surgery date", "holder": "contact:101", "node_blocked": "final_bills", "node_waiting": "surgery_date", "source_ids": ["note:4"], "evidence": "they are waiting for the client to call and schedule"},
+    {"id": 3, "blocked": "final medical bills", "waiting_on": "surgery date", "holder": "contact:201", "node_blocked": "final_bills", "node_waiting": "surgery_date", "source_ids": ["note:5"], "evidence": "He says he will schedule the surgery whenever the office calls him"},
+    {"id": 4, "blocked": "settlement evaluation", "waiting_on": "declarations page", "holder": "contact:301", "node_blocked": "settlement_eval", "node_waiting": "dec_page", "source_ids": ["note:2"], "evidence": "Asked for the declarations page in writing."}
+  ],
+  "conflicts": [
+    {"id": 1, "fact_ids": [3, 4], "topic": "Policy limit", "explanation": "The matter record and the adjuster's statement give different policy limits.", "severity": "high", "kpi_affected": "coverage", "status": "open"}
+  ],
+  "issues": [
+    {"id": 1, "topic": "Health plan lien amount unconfirmed", "fact_ids": [12], "first_flagged": "2026-09-29", "last_mentioned": "2026-09-29", "mentions": 1, "resolved_by_fact": null}
+  ],
+  "edition": {
+    "headline": {"text": "Surgery is unscheduled, and each side says the other should call", "source_ids": ["note:4", "note:5"], "evidence": "they are waiting for the client to call and schedule"},
+    "lead": [
+      {"text": "Dr. McCulloch recommends arthroscopic shoulder surgery.", "source_ids": ["note:3"], "evidence": "Dr. McCulloch recommends arthroscopic shoulder surgery."},
+      {"text": "The office says it is waiting for the client to call and schedule.", "source_ids": ["note:4"], "evidence": "they are waiting for the client to call and schedule"},
+      {"text": "The client says he will schedule whenever the office calls him.", "source_ids": ["note:5"], "evidence": "He says he will schedule the surgery whenever the office calls him"},
+      {"text": "Demand cannot go out until surgery is done and final bills are in.", "source_ids": ["note:3"], "evidence": "Demand cannot go out until surgery is done and final bills are in."}
+    ]
+  }
+}
